@@ -1,49 +1,63 @@
+import pandas as pd       # Manipulación y análisis de datos en tablas (DataFrames).
+import numpy as np        # Cálculos numéricos y manejo de arreglos/matrices.
+import seaborn as sns     # Visualización estadística avanzada (gráficos bonitos y rápidos).
+import statsmodels.api as sm       # Modelos econométricos y estadísticos (regresiones, pruebas, etc.).
+import statsmodels.stats.api as sms  # Pruebas estadísticas específicas (heterocedasticidad, autocorrelación...).
+from statsmodels.stats.outliers_influence import variance_inflation_factor  
+# Calcula el VIF (factor de inflación de la varianza) para detectar multicolinealidad.
+import matplotlib.pyplot as plt    # Creación de gráficos básicos y personalizables.
+from pathlib import Path           # Manejo de rutas y archivos de forma más segura y moderna.
+from tabulate import tabulate      # Muestra tablas en consola con formato legible.
 
-import pandas as pd
-import numpy as np
-import seaborn as sns
-import statsmodels.api as sm
-import statsmodels.stats.api as sms
-from statsmodels.stats.outliers_influence import variance_inflation_factor
-import matplotlib.pyplot as plt
-from pathlib import Path
-from tabulate import tabulate
-
-
+### Ver todas las hojas de excel ###
+"""
+excel = pd.ExcelFile('DATA/model_program.xlsx')
+print(excel.sheet_names)  # Lista todas las hojas
+"""
+#### Ver que todas las hojas de excel y en cual se encuentra activa ###
+"""
+from openpyxl import load_workbook (modulo Workbook)
+wb = load_workbook('DATA/model_program.xlsx')
+print(wb.sheetnames)      # Muestra todas las hojas
+print(wb.active.title)    # Muestra el nombre de la hoja activa
+"""
 ########################## MCO ##########################
-
 # 1️⃣ Cargar datos
-path = Path('DATA/bd-subnacionales.xlsx')
+path = Path('DATA/model_program.xlsx')
 df = pd.read_excel(path)
 
 # 2️⃣ Limpiar nombres de columnas (quitar espacios al inicio/final y saltos de línea)
 df.columns = df.columns.str.strip().str.replace('\n','').str.replace('\r','')
 
-print(df)
-"""
 # 3️⃣ Renombrar columnas para trabajar más fácil
+
 df = df.rename(columns={
-    'TASA % EJECUCIÓN PRESUPUESTAL (avance)': 'Ejecucion',
-    'Capacidad recaudatoria total': 'Capacidad_recaudatoria',
-    'Recursos directamente recaudados': 'RDR'
+    'Ingresos Fiscales': 'Ingfisca',
 })
 
 # Aplicar logaritmo natural (ln) a las variables positivas
-df['ln_PIM'] = np.log(df['PIM'])
-df['ln_Capacidad_recaudatoria'] = np.log(df['Capacidad_recaudatoria'])
+df['ln_PBI'] = np.log(df['PBI'])
+df['ln_Ingfisca'] = np.log(df['Ingfisca'])
+df['ln_TIR'] = np.log(df['TIR'])
+df['ln_TIR_lag1'] = df['ln_TIR'].shift(1) #rezago 
 
 
 # 3️⃣ Definir variables
-Y = df['Ejecucion']  # variable dependiente
-X = df[['ln_PIM','ln_Capacidad_recaudatoria','RDR']]  # variables explicativas
+"""
+Y = df['ln_PBI'].loc[x:index]  # variable dependiente
+X = df[['ln_TIR','ln_Ingfisca']]  # variables explicativas
+"""
+X = df[['ln_TIR_lag1', 'ln_Ingfisca']].dropna()
 X = sm.add_constant(X)  # agregar intercepto
+Y = df['ln_PBI'].loc[X.index]
 
 # 4️⃣ Ajustar modelo MCO simple
 
 model = sm.OLS(Y, X).fit()
 residuos = model.resid
-"""
-"""
+print(model.summary())
+
+
 # 6️⃣ Crear tabla de coeficientes con intervalos de confianza
 coef_table = pd.DataFrame({
     'Coeficiente': model.params,
@@ -69,12 +83,10 @@ print(tabulate(summary_table, headers='keys', tablefmt='fancy_grid', floatfmt=".
 print("\n=== Coeficientes del Modelo ===")
 print(tabulate(coef_table, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"))
 
-"""
 ########################## PRUEBA DE CORRELACIÓN ##########################
 
-"""
 # 5️⃣ Seleccionar variables que quieres correlacionar
-cols = ['Ejecucion', 'RDR', 'ln_PIM', 'ln_Capacidad_recaudatoria']
+cols = ['ln_PBI','ln_TIR_lag1','ln_Ingfisca']
 
 # 6️⃣ Calcular matriz de correlaciones
 corr_matrix = df[cols].corr()
@@ -88,70 +100,93 @@ plt.figure(figsize=(8,6))
 sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
 plt.title('Heatmap de Correlaciones')
 plt.show()
-"""
-
-########################## PRUEBA DE AUTOCORRELACION (DURBIN_WATSON) ##########################
-"""
-from statsmodels.stats.stattools import durbin_watson
-
-dw = durbin_watson(model.resid)
-print('Durbin-Watson:', dw)
-"""
-# Interpretación:
-# DW ≈ 2.0: No hay autocorrelación (ideal).
-# DW < 2.0: Posible autocorrelación positiva.
-# DW > 2.0: Posible autocorrelación negativa.
-
-########################## PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE) ##########################
-"""
-from statsmodels.stats.diagnostic import het_white
-# Test de White
-white_test = het_white(model.resid, model.model.exog)
-
-# Etiquetas
-labels = ['LM stat', 'LM p-value', 'F-stat', 'F p-value']
-
-# Crear un DataFrame para mostrarlo bonito
-white_df = pd.DataFrame([white_test], columns=labels)
-
-print("📊 Resultado del Test de White (Heterocedasticidad)")
-print(white_df)
-
-# H0 (Hipótesis nula): La varianza de los errores es constante (homocedasticidad)
-# H1 (Hipótesis alternativa): La varianza de los errores no es constante (heterocedasticidad)
-
-# Nota: Si el p-value del test es mayor que el nivel de significancia (por ejemplo, 0.05),
-# no se rechaza H0, lo que indica que no hay evidencia significativa de heterocedasticidad.
-"""
+.0
 
 ########################## PRUEBA DE MULTICOLINEALIDAD VIF ##########################
-"""
+
 #Calcular VIF
 vif_data = pd.DataFrame()
 vif_data['Variable'] = X.columns
 vif_data['VIF'] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
 
 print(vif_data)
-"""
 
+
+########################## PRUEBA DE AUTOCORRELACION (DURBIN_WATSON) ##########################
+
+from statsmodels.stats.stattools import durbin_watson
+
+dw = durbin_watson(model.resid)
+dw_table = pd.DataFrame({
+    'Estadístico': ['Durbin-Watson'],
+    'Valor': [dw]
+})
+print("\n=== AUTOCORRELACION _DURBIN_WATSON ===")
+print(tabulate(dw_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
+
+if dw> 2.0: 
+    print("Posible autocorrelación negativa")
+elif dw < 2.0:
+    print("Posible autocorrelación positiva")
+elif dw == 2.0:
+    print("No hay autocorrelación (ideal)")
+
+
+# Interpretación:
+# DW ≈ 2.0: No hay autocorrelación (ideal).
+# DW < 2.0: Posible autocorrelación positiva.
+# DW > 2.0: Posible autocorrelación negativa.
+
+########################## PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE) ##########################
+
+from statsmodels.stats.diagnostic import het_white
+# Test de White
+white_test = het_white(model.resid, model.model.exog)
+
+white_test_table = pd.DataFrame({
+    'Estadístico': ['LM stat', 'LM p-value', 'F-stat', 'F p-value'],
+    'Valor': white_test
+})
+
+print("\n=== Resultado del Test de White (Heterocedasticidad) ===")
+print(tabulate(white_test_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
+
+if white_test[1] > 0.05:
+    print("No se rechaza H0: la varianza de los errores es constante (homocedástica)")
+else:
+    print("Se rechaza H0: la varianza de los errores no es constante (heterocedástica)")
+
+# H0 (Hipótesis nula): La varianza de los errores es constante (homocedasticidad)
+# H1 (Hipótesis alternativa): La varianza de los errores no es constante (heterocedasticidad)
+
+# Nota: Si el p-value del test es mayor que el nivel de significancia (por ejemplo, 0.05),
+# no se rechaza H0, lo que indica que no hay evidencia significativa de heterocedasticidad"""
 
 ########################## PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA) ##########################
-"""
+
 from statsmodels.stats.stattools import jarque_bera
 
 jb_stat, jb_pvalue, skew, kurtosis = jarque_bera(residuos)
 
+jb_table = pd.DataFrame({
+    'Estadístico': ['JB estadístico', 'p-value', 'Skew', 'Kurtosis'],
+    'Valor': [jb_stat, jb_pvalue, skew, kurtosis]
+})
+
+print("\n=== Jarque - Bera ===")
+print(tabulate(jb_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
+"""
 print("Jarque-Bera Test")
 print("JB estadístico:", jb_stat)
 print("p-value:", jb_pvalue)
 print("Skew:", skew)
 print("Kurtosis:", kurtosis)
-
+"""
 if jb_pvalue > 0.05:
     print("No se rechaza H0: los residuos se distribuyen normalmente")
 else:
     print("Se rechaza H0: los residuos no son normales")
-"""
+
 
 ########################## PRUEBA DE ESTABILIDAD ESTRUCTURAL (JARQUE - BERA) ##########################
 """
@@ -200,106 +235,3 @@ if p_value < 0.05:
 else:
     print("No se rechaza H0: el modelo es estructuralmente estable")
 """
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-"""
-# 5️⃣ Resultados
-print(model.summary())
-"""
-"""
-
-# 6️⃣ Guardar predicciones
-df_model['Y_pred'] = model.predict(X)
-
-# 7️⃣ Gráficos de Ejecucion real vs predicha
-outdir = Path('DATA/analisis_outputs')
-outdir.mkdir(parents=True, exist_ok=True)
-
-plt.figure()
-plt.plot(df_model['AÑO'], df_model['Ejecucion'], marker='o', label='Real')
-plt.plot(df_model['AÑO'], df_model['Y_pred'], marker='x', label='Predicha')
-plt.title('Ejecución presupuestal: Real vs Predicha')
-plt.xlabel('Año')
-plt.ylabel('Ejecución (0-1)')
-plt.legend()
-plt.grid(True)
-plt.savefig(outdir/'ejecucion_vs_predicha.png')
-plt.close()
-
-# 8️⃣ Guardar datos con predicciones
-df_model.to_csv(outdir/'df_model_simple.csv', index=False)
-
-print('Análisis completo. Resultados y gráficos guardados en:', outdir)
-"""
-
-
-
-
-
-
-"""
-# Convertir Ejecución de % a decimal
-df['Ejecucion'] = df['Ejecucion'].str.replace('%','').astype(float)/100
-"""
-"""
-# Eliminar filas con datos faltantes en variables que usaremos
-df_model = df.dropna(subset=['Ejecucion','PIM','Capacidad_recaudatoria','RDR']).copy()
-"""
-
-
-
