@@ -33,6 +33,7 @@ df.columns = df.columns.str.strip().str.replace('\n','').str.replace('\r','')
 
 df = df.rename(columns={
     'Ingresos Fiscales': 'Ingfisca',
+    'Tasa de encaje' : 'TE'
 })
 
 # Aplicar logaritmo natural (ln) a las variables positivas
@@ -41,6 +42,7 @@ df['ln_Ingfisca'] = np.log(df['Ingfisca'])
 df['ln_TIR'] = np.log(df['TIR'])
 df['ln_TIR_lag1'] = df['ln_TIR'].shift(1) #rezago 
 
+print(df)
 
 # 3️⃣ Definir variables
 """
@@ -57,7 +59,7 @@ model = sm.OLS(Y, X).fit()
 residuos = model.resid
 print(model.summary())
 
-
+"""
 # 6️⃣ Crear tabla de coeficientes con intervalos de confianza
 coef_table = pd.DataFrame({
     'Coeficiente': model.params,
@@ -163,7 +165,7 @@ else:
 # no se rechaza H0, lo que indica que no hay evidencia significativa de heterocedasticidad"""
 
 ########################## PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA) ##########################
-
+"""
 from statsmodels.stats.stattools import jarque_bera
 
 jb_stat, jb_pvalue, skew, kurtosis = jarque_bera(residuos)
@@ -176,18 +178,20 @@ jb_table = pd.DataFrame({
 print("\n=== Jarque - Bera ===")
 print(tabulate(jb_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
 """
+"""
 print("Jarque-Bera Test")
 print("JB estadístico:", jb_stat)
 print("p-value:", jb_pvalue)
 print("Skew:", skew)
 print("Kurtosis:", kurtosis)
 """
+"""
 if jb_pvalue > 0.05:
     print("No se rechaza H0: los residuos se distribuyen normalmente")
 else:
     print("Se rechaza H0: los residuos no son normales")
 
-
+"""
 ########################## PRUEBA DE ESTABILIDAD ESTRUCTURAL (JARQUE - BERA) ##########################
 """
 from scipy import stats
