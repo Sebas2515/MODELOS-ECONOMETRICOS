@@ -107,13 +107,18 @@ for name, column in df_log_diff.items():
 from statsmodels.tsa.api import VAR
 
 model = VAR(df_log_diff)
-print("\n--- 4. Selección de Rezagos Óptimos (AIC, BIC) ---")
+print("\n--- 4. Selección de Rezagos Óptimos (AIC, BIC, FPE, HQIC) ---")
 lag_selection = model.select_order(maxlags=4)
 print(lag_selection.summary())
 
+optimal_lags = lag_selection.selected_orders['aic']
+print(f"Rezagos óptimos según AIC: {optimal_lags}")
+
+"""
 # Usaremos el valor sugerido por el AIC, que es común en la práctica
 optimal_lags = lag_selection.aic
 print(f"\nRezagos óptimos seleccionados (AIC): {optimal_lags}")
+"""
 
 ################################################################################
 # PASO 5: AJUSTE DEL MODELO VAR
@@ -126,6 +131,7 @@ print(model_fitted.summary())
 model = VAR(df[['ln_PBI', 'ln_SP', 'ln_TCRM']])
 lag_order = model.select_order(maxlags=8)
 print(lag_order.summary())
+
 
 ################################################################################
 # PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (corregido)
@@ -174,6 +180,7 @@ for i, var in enumerate(variables):
 axes[-1].set_xlabel('Horizonte (periodos)')
 plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
+
 
 
 
