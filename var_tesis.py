@@ -118,6 +118,7 @@ print(f"Rezagos óptimos según AIC: {optimal_lags}")
 # Usaremos el valor sugerido por el AIC, que es común en la práctica
 optimal_lags = lag_selection.aic
 print(f"\nRezagos óptimos seleccionados (AIC): {optimal_lags}")
+
 """
 
 ################################################################################
@@ -128,11 +129,12 @@ model_fitted = model.fit(optimal_lags)
 print("\n--- 6. Resumen del Modelo VAR ---")
 print(model_fitted.summary())
 
+# Este modelo se estima solo para ver como se comportarian las variables con 8 rezagos
 model = VAR(df[['ln_PBI', 'ln_SP', 'ln_TCRM']])
 lag_order = model.select_order(maxlags=8)
 print(lag_order.summary())
 
-
+"""
 ################################################################################
 # PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (corregido)
 ################################################################################
@@ -180,16 +182,85 @@ for i, var in enumerate(variables):
 axes[-1].set_xlabel('Horizonte (periodos)')
 plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
+"""
 
+################################################################################
+# PRUEBA 1 - AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
+################################################################################
+from statsmodels.stats.stattools import durbin_watson
+from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 
+# residuales en un DataFrame
+resid = pd.DataFrame(model_fitted.resid, columns=model_fitted.names)
 
+# test Ljung-Box para cada residuo (puedes cambiar lags)
+lags = [4]
 
+print("\n=== PRUEBA DE AUTOCORRELACIÓN SERIAL (LJUNG–BOX) ===")
+for col in resid:
+    lb = acorr_ljungbox(resid[col], lags=lags, return_df=True)
+    p_value = lb['lb_pvalue'].iloc[-1] 
+# observa p-values; p < 0.05 indica autocorrelación
+# Condicional para interpretar los resultados
+    if p_value < 0.05:
+        print(f"❌ {col}: p-value = {p_value:.4f} → Hay autocorrelación en los residuos.")
+    else:
+        print(f"✅ {col}: p-value = {p_value:.4f} → No hay autocorrelación (residuos independientes).")
 
+################################################################################
+# PRUEBA 2 - HETEROCEDASTICIDAD (ARCH)
+################################################################################
+from statsmodels.stats.diagnostic import het_arch
 
+print("\n--- PRUEBA DE HETEROCEDASTICIDAD (ARCH) ---")
+for col in resid:
+    print(f"\nResiduo de {col}:")
+    arch_test = het_arch(resid[col])
+    f_stat, f_pvalue, lm_stat, lm_pvalue = arch_test
 
+    print(f"Estadístico F: {f_stat:.4f}  |  p-valor: {f_pvalue:.4f}")
+    print(f"Estadístico LM: {lm_stat:.4f} |  p-valor: {lm_pvalue:.4f}")
 
+    # Condicional interpretativa
+    if f_pvalue > 0.05 and lm_pvalue > 0.05:
+        print(f"✅ No hay evidencia de heterocedasticidad en {col} (varianza constante).")
+    else:
+        print(f"⚠️ Se detecta heterocedasticidad en {col} (p < 0.05). Posible varianza no constante.")
 
+################################################################################
+# PRUEBA 3 - NORMALIDAD (Jarque-Bera)
+################################################################################
+from scipy import stats
 
+print("\n--- PRUEBA DE NORMALIDAD (Jarque-Bera) ---")
+for col in resid:
+    jb = stats.jarque_bera(resid[col])
+    jb_stat, jb_pvalue = jb.statistic, jb.pvalue
+
+    print(f"{col}: JB = {jb_stat:.3f}, p-valor = {jb_pvalue:.4f}")
+
+    # Condicional interpretativa
+    if jb_pvalue > 0.05:
+        print(f"✅ No se rechaza la normalidad para {col} (residuos normales).")
+    else:
+        print(f"⚠️ Se rechaza la normalidad para {col} (residuos no normales, p < 0.05).")
+
+################################################################################
+# PRUEBA 4 - ESTABILIDAD DEL MODELO VAR
+################################################################################
+print("\n--- PRUEBA DE ESTABILIDAD DEL MODELO VAR ---")
+
+stable = model_fitted.is_stable()
+print(f"¿El modelo es estable?: {'✅ Sí' if stable else '❌ No'}")
+
+roots = model_fitted.roots
+print("Raíces del polinomio AR:", np.round(roots, 4))
+
+# Interpretación adicional
+if np.all(np.abs(roots) < 1):
+    print("✅ Todas las raíces están dentro del círculo unitario → el modelo es dinámicamente estable.")
+else:
+    print("⚠️ Algunas raíces están fuera del círculo unitario → el modelo es inestable.")
 
 
 

@@ -201,11 +201,13 @@ else:
     print("No se rechaza H0: el modelo es estructuralmente estable")
 """
 
-
-
-
-
-
+"""
+# --- 1. Autocorrelación de los residuos (Durbin-Watson) ---
+print("\n--- PRUEBA DE AUTOCORRELACIÓN (Durbin-Watson) ---")
+dw_stats = durbin_watson(model_fitted.resid)
+for col, val in zip(model_fitted.names, dw_stats):
+    print(f"{col}: {val:.2f} {'→ posible autocorrelación' if (val < 1.5 or val > 2.5) else '→ sin autocorrelación aparente'}")
+"""
 
 
 
