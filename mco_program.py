@@ -28,7 +28,7 @@ print(wb.active.title)    # Muestra el nombre de la hoja activa
 path = Path('DATA/model_program.xlsx')
 
 # Cargar la hoja específica para la tesis
-df = pd.read_excel(path, sheet_name='BD', parse_dates=['Año'], index_col='Año')
+df = pd.read_excel(path, sheet_name='bd-tri', parse_dates=['Año'], index_col='Año')
 
 # Limpiar nombres de columnas (buena práctica)
 df.columns = df.columns.str.strip().str.replace(' ', '_')
@@ -51,12 +51,23 @@ df.info()
 df['ln_PBI'] = np.log(df['PBI'])
 df['ln_Ingfisca'] = np.log(df['Ingfisca'])
 df['ln_TIR'] = np.log(df['TIR'])
-df['ln_TIR_lag1'] = df['ln_TIR'].shift(1) #rezago  
+df['ln_TE'] = np.log(df['TE'])
 
+# Crear las diferencias logarítmicas (crecimientos porcentuales aproximados)
+df['dln_PBI'] = df['ln_PBI'].diff()
+df['dln_Ingfisca'] = df['ln_Ingfisca'].diff()
+df['dln_TIR'] = df['ln_TIR'].diff()
+df['dln_TE'] = df['ln_TE'].diff()
+
+# Eliminar los primeros NaN generados por la diferencia
+df = df.dropna()
+"""
 # Creamos un nuevo DataFrame solo con las variables de interés (en logaritmos)
-df_log = df[['ln_PBI', 'ln_Ingfisca', 'ln_TIR_lag1']].copy()
-
+df_log = df[['ln_PBI_log1', 'ln_Ingfisca_lag1', 'ln_TIR_lag1', 'ln_TE_lag1']].copy()
 print(df_log.head())
+"""
+print("\n--- 1. Datos transformados a diferencias logarítmicas ---")
+print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
 
 ################################################################################
 # PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
@@ -64,7 +75,7 @@ print(df_log.head())
 from statsmodels.tsa.stattools import adfuller
 
 def adf_test(series, name=''):
-    """Realiza el test de Dickey-Fuller Aumentado en una serie temporal."""
+    "Realiza el test de Dickey-Fuller Aumentado en una serie temporal."
     result = adfuller(series.dropna())
     print(f'\n--- Test de Estacionariedad para: {name} ---')
     print(f'ADF Statistic: {result[0]:.4f}')
@@ -77,7 +88,7 @@ def adf_test(series, name=''):
 # Filtrar columnas con 'ln_'
 cols_log = [col for col in df.columns if 'ln_' in col]
 
-print("\n--- 3. Verificando Estacionariedad de las series logarítmicas ---")
+print("\n--- 2. Verificando Estacionariedad de las series logarítmicas ---")
 for name in cols_log:
     adf_test(df[name], name=name)
 
@@ -85,16 +96,16 @@ for name in cols_log:
 # PASO 4: AJUSTE DEL MODELO MCO
 ################################################################################
 
-# Definir variables
-
-X = df[['ln_TIR_lag1', 'ln_Ingfisca']].dropna()
-X = sm.add_constant(X)  # agregar intercepto
-Y = df['ln_PBI'].loc[X.index]
+# Definir variables explicativas y dependiente
+Y = df['dln_PBI']
+X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE']]
+X = sm.add_constant(X)
 
 # 4️⃣ Ajustar modelo MCO simple
 
 model = sm.OLS(Y, X).fit()
 residuos = model.resid
+print("\n=== RESULTADOS DEL MODELO MCO (Δln variables) ===")
 print(model.summary())
 
 
@@ -124,10 +135,12 @@ print("\n=== Coeficientes del Modelo ===")
 print(tabulate(coef_table, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"))
 
 
-########################## PRUEBA DE CORRELACIÓN ##########################
+###############################################################################
+# PASO 5: PRUEBA DE CORRELACIÓN
+################################################################################
 
 # 5️⃣ Seleccionar variables que quieres correlacionar
-cols = ['ln_PBI','ln_TIR_lag1','ln_Ingfisca']
+cols = ['dln_PBI', 'dln_TIR', 'dln_Ingfisca', 'dln_TE']
 
 # 6️⃣ Calcular matriz de correlaciones
 corr_matrix = df[cols].corr()
@@ -143,7 +156,9 @@ plt.title('Heatmap de Correlaciones')
 plt.show()
 .0
 
-########################## PRUEBA DE MULTICOLINEALIDAD VIF ##########################
+################################################################################
+# PASO 5: PRUEBA DE MULTICOLINEALIDAD VIF
+################################################################################
 
 #Calcular VIF
 vif_data = pd.DataFrame()
@@ -154,7 +169,7 @@ print(vif_data)
 
 
 ########################## PRUEBA DE AUTOCORRELACION (DURBIN_WATSON) ##########################
-"""
+
 from statsmodels.stats.stattools import durbin_watson
 
 dw = durbin_watson(model.resid)
@@ -177,10 +192,10 @@ elif dw == 2.0:
 # DW ≈ 2.0: No hay autocorrelación (ideal).
 # DW < 2.0: Posible autocorrelación positiva.
 # DW > 2.0: Posible autocorrelación negativa.
-"""
+
 
 ########################## PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE) ##########################
-"""
+
 
 from statsmodels.stats.diagnostic import het_white
 # Test de White
@@ -207,7 +222,7 @@ else:
 
 
 ########################## PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA) ##########################
-"""
+
 from statsmodels.stats.stattools import jarque_bera
 
 jb_stat, jb_pvalue, skew, kurtosis = jarque_bera(residuos)
@@ -232,7 +247,7 @@ if jb_pvalue > 0.05:
     print("No se rechaza H0: los residuos se distribuyen normalmente")
 else:
     print("Se rechaza H0: los residuos no son normales")
-"""
+
 
 ########################## PRUEBA DE ESTABILIDAD ESTRUCTURAL (JARQUE - BERA) ##########################
 """
