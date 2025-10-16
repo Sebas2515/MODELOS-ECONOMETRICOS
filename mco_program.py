@@ -52,12 +52,14 @@ df['ln_PBI'] = np.log(df['PBI'])
 df['ln_Ingfisca'] = np.log(df['Ingfisca'])
 df['ln_TIR'] = np.log(df['TIR'])
 df['ln_TE'] = np.log(df['TE'])
+df['ln_EP'] = np.log(df['EP'])
 
 # Crear las diferencias logarítmicas (crecimientos porcentuales aproximados)
 df['dln_PBI'] = df['ln_PBI'].diff()
 df['dln_Ingfisca'] = df['ln_Ingfisca'].diff()
 df['dln_TIR'] = df['ln_TIR'].diff()
 df['dln_TE'] = df['ln_TE'].diff()
+df['dln_EP'] = df['ln_EP'].diff()
 
 # Eliminar los primeros NaN generados por la diferencia
 df = df.dropna()
@@ -68,6 +70,7 @@ print(df_log.head())
 """
 print("\n--- 1. Datos transformados a diferencias logarítmicas ---")
 print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
+
 
 ################################################################################
 # PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
@@ -96,9 +99,14 @@ for name in cols_log:
 # PASO 4: AJUSTE DEL MODELO MCO
 ################################################################################
 
+# === Crear dummy para el quiebre estructural en T320 ===
+df['dummy_quiebre'] = 0
+df.loc[df['Año'] >= 'T320', 'dummy_quiebre'] = 1
+
+
 # Definir variables explicativas y dependiente
 Y = df['dln_PBI']
-X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE']]
+X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE','dln_EP', 'dummy_quiebre']]
 X = sm.add_constant(X)
 
 # 4️⃣ Ajustar modelo MCO simple
@@ -248,9 +256,9 @@ if jb_pvalue > 0.05:
 else:
     print("Se rechaza H0: los residuos no son normales")
 
-
-########################## PRUEBA DE ESTABILIDAD ESTRUCTURAL (JARQUE - BERA) ##########################
 """
+########################## PRUEBA DE ESTABILIDAD ESTRUCTURAL (JARQUE - BERA) ##########################
+
 from scipy import stats
 
 # Supongamos que 'df' tiene tu data de 2014-2024
@@ -296,3 +304,68 @@ if p_value < 0.05:
 else:
     print("No se rechaza H0: el modelo es estructuralmente estable")
 """
+
+################################################################################
+# 3️⃣ FUNCIÓN PARA EL TEST DE CHOW
+################################################################################
+from scipy import stats
+
+def chow_test(df, split_index):
+    """Realiza el test de Chow en el punto de quiebre indicado (por posición)"""
+    
+    # Dividir usando posición, no etiquetas (iloc)
+    Y1 = df.iloc[:split_index]['dln_PBI']
+    X1 = sm.add_constant(df.iloc[:split_index][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
+    
+    Y2 = df.iloc[split_index:]['dln_PBI']
+    X2 = sm.add_constant(df.iloc[split_index:][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
+    
+    # Modelo completo
+    Y_full = df['dln_PBI']
+    X_full = sm.add_constant(df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
+    
+    model_full = sm.OLS(Y_full, X_full).fit()
+    model1 = sm.OLS(Y1, X1).fit()
+    model2 = sm.OLS(Y2, X2).fit()
+    
+    # Estadístico F de Chow
+    n1, n2 = len(Y1), len(Y2)
+    k = X_full.shape[1]
+    SSR_full = sum(model_full.resid ** 2)
+    SSR1 = sum(model1.resid ** 2)
+    SSR2 = sum(model2.resid ** 2)
+    
+    F = ((SSR_full - (SSR1 + SSR2)) / k) / ((SSR1 + SSR2) / (n1 + n2 - 2 * k))
+    p_value = 1 - stats.f.cdf(F, k, n1 + n2 - 2 * k)
+    return F, p_value
+
+################################################################################
+# 4️⃣ EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
+################################################################################
+
+# Reiniciamos el índice para que el loop funcione bien (Año pasa a columna normal)
+df_reset = df.reset_index(drop=False).rename(columns={'index': 'Trimestre'})
+
+results = []
+for i in range(8, len(df_reset) - 8):  # evita cortes con pocas observaciones
+    F, p = chow_test(df_reset, i)
+    results.append((df_reset.loc[i, 'Año'], F, p))
+
+results_df = pd.DataFrame(results, columns=['Trimestre', 'F_stat', 'p_value'])
+
+################################################################################
+# 5️⃣ MOSTRAR RESULTADOS
+################################################################################
+
+best_break = results_df.loc[results_df['F_stat'].idxmax()]
+
+print("📊 Test de Chow — Resultados por Trimestre")
+print(results_df.to_string(index=False))
+print("\n🏆 Posible punto de cambio estructural:")
+print(best_break)
+
+if best_break['p_value'] < 0.05:
+    print(f"\n❌ Se rechaza H₀: cambio estructural detectado en el trimestre {best_break['Trimestre']}")
+else:
+    print(f"\n✅ No se rechaza H₀: el modelo es estable estructuralmente")
+
