@@ -277,19 +277,7 @@ else:
 
 
 
-"""
-################################################################################
-# PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF)
-################################################################################
 
-# Generar las funciones impulso-respuesta (IRF)
-irf = model_fitted.irf(8)  # horizonte de 8 períodos (puedes ajustar a 12 o más si deseas)
-  
-# Graficar solo las respuestas de ln_SP a los choques de todas las variables
-irf.plot(orth=False, impulse=None, response='ln_SP')
-plt.suptitle('Funciones Impulso-Respuesta para ln_SP', fontsize=14)
-plt.show()
-"""
 
 """
 ################################################################################
