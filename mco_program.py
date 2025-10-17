@@ -98,7 +98,7 @@ print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
 """
 
 ################################################################################
-# PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
+# PASO 2: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
 ################################################################################
 from statsmodels.tsa.stattools import adfuller
 
@@ -121,7 +121,7 @@ for name in cols_log:
     adf_test(df[name], name=name)
 
 ###############################################################################
-# PASO 4: AJUSTE DEL MODELO MCO
+# PASO 3: AJUSTE DEL MODELO MCO
 ################################################################################
 """
 print(df.columns.tolist())
@@ -178,7 +178,7 @@ print(tabulate(coef_table, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"
 
 
 ###############################################################################
-# PASO 5: PRUEBA DE CORRELACIÓN
+# PASO 4: PRUEBA DE CORRELACIÓN
 ################################################################################
 
 # 5️⃣ Seleccionar variables que quieres correlacionar
@@ -235,9 +235,9 @@ elif dw == 2.0:
 # DW < 2.0: Posible autocorrelación positiva.
 # DW > 2.0: Posible autocorrelación negativa.
 
-
-########################## PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE) ##########################
-
+################################################################################
+# PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE)
+################################################################################
 
 from statsmodels.stats.diagnostic import het_white
 # Test de White
@@ -263,7 +263,9 @@ else:
 # no se rechaza H0, lo que indica que no hay evidencia significativa de heterocedasticidad"""
 
 
-########################## PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA) ##########################
+################################################################################
+# PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA)
+################################################################################
 
 from statsmodels.stats.stattools import jarque_bera
 
@@ -292,7 +294,7 @@ else:
 
 
 ################################################################################
-# 3️⃣ FUNCIÓN PARA EL TEST DE CHOW - ESTABILIDAD ESTRUCTURAL 
+# FUNCIÓN PARA EL TEST DE CHOW - ESTABILIDAD ESTRUCTURAL 
 ################################################################################
 from scipy import stats
 
@@ -329,7 +331,7 @@ def chow_test(df, split_index):
     return F, p_value
 
 ################################################################################
-# 4️⃣ EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
+# EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
 ################################################################################
 
 # Reiniciamos el índice para que el loop funcione bien (Año pasa a columna normal)
@@ -343,7 +345,7 @@ for i in range(8, len(df_reset) - 8):  # evita cortes con pocas observaciones
 results_df = pd.DataFrame(results, columns=['Trimestre', 'F_stat', 'p_value'])
 
 ################################################################################
-# 5️⃣ MOSTRAR RESULTADOS
+# MOSTRAR RESULTADOS
 ################################################################################
 
 best_break = results_df.loc[results_df['F_stat'].idxmax()]

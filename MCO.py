@@ -10,7 +10,9 @@ from pathlib import Path
 from tabulate import tabulate
 
 
-########################## MCO ##########################
+################################################################################
+#                           MCO
+################################################################################
 
 # 1️⃣ Cargar datos
 path = Path('DATA/bd-subnacionales.xlsx')
@@ -20,6 +22,79 @@ df = pd.read_excel(path)
 df.columns = df.columns.str.strip().str.replace('\n','').str.replace('\r','')
 
 print(df)
+
+################################################################################
+# PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
+################################################################################
+
+def adf_test(series, name=''):
+    """Realiza el test de Dickey-Fuller Aumentado en una serie temporal."""
+    result = adfuller(series.dropna())
+    print(f'--- Test de Estacionariedad para: {name} ---')
+    print(f'ADF Statistic: {result[0]:.4f}')
+    print(f'p-value: {result[1]:.4f}')
+    if result[1] <= 0.05:
+        print("Resultado: Evidencia fuerte contra la hipótesis nula (H0), la serie es estacionaria.\n")
+    else:
+        print("Resultado: Evidencia débil contra H0, la serie tiene una raíz unitaria y es no-estacionaria.\n")
+
+# =====================================
+# 3.1 Verificando Estacionariedad SOLO en las series logarítmicas
+# =====================================
+print("\n--- 3. Verificando Estacionariedad de las series logarítmicas ---")
+
+# Filtrar columnas que contienen 'ln_' en su nombre
+cols_log = [col for col in df.columns if 'ln_' in col]
+
+# Crear DataFrame solo con las columnas logarítmicas
+df_log = df[cols_log]
+
+# Aplicar el test ADF a las series en logaritmos
+for name, column in df_log.items():
+    adf_test(column, name=name)
+
+# =====================================
+# 3.2 Verificando Estacionariedad en las series logarítmicas diferenciadas
+# =====================================
+print("\n--- 4. Verificando Estacionariedad de las series logarítmicas en primera diferencia ---")
+
+# Diferenciar solo las columnas logarítmicas
+df_log_diff = df_log.diff().dropna()
+
+# Aplicar el test ADF a las series logarítmicas diferenciadas
+for name, column in df_log_diff.items():
+    adf_test(column, name=f'{name}_diff')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
 # 3️⃣ Renombrar columnas para trabajar más fácil
 df = df.rename(columns={

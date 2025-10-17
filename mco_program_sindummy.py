@@ -88,7 +88,7 @@ print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
 
 
 ################################################################################
-# PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
+# PASO 2: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
 ################################################################################
 from statsmodels.tsa.stattools import adfuller
 
@@ -111,7 +111,7 @@ for name in cols_log:
     adf_test(df[name], name=name)
 
 ###############################################################################
-# PASO 4: AJUSTE DEL MODELO MCO
+# PASO 3: AJUSTE DEL MODELO MCO
 ################################################################################
 
 # Definir variables explicativas y dependiente
@@ -154,7 +154,7 @@ print(tabulate(coef_table, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"
 
 
 ###############################################################################
-# PASO 5: PRUEBA DE CORRELACIÓN
+# PASO 4: PRUEBA DE CORRELACIÓN
 ################################################################################
 
 # 5️⃣ Seleccionar variables que quieres correlacionar
@@ -187,7 +187,7 @@ print(vif_data)
 
 
 ################################################################################
-# PASO 5: PRUEBA DE AUTOCORRELACION (DURBIN_WATSON)
+# PASO 6: PRUEBA DE AUTOCORRELACION (DURBIN_WATSON)
 ################################################################################
 
 from statsmodels.stats.stattools import durbin_watson
@@ -272,7 +272,7 @@ else:
 
 
 ################################################################################
-# 3️⃣ FUNCIÓN PARA EL TEST DE CHOW - ESTABILIDAD ESTRUCTURAL 
+# FUNCIÓN PARA EL TEST DE CHOW - ESTABILIDAD ESTRUCTURAL 
 ################################################################################
 from scipy import stats
 
@@ -306,7 +306,7 @@ def chow_test(df, split_index):
     return F, p_value
 
 ################################################################################
-# 4️⃣ EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
+# EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
 ################################################################################
 
 # Reiniciamos el índice para que el loop funcione bien (Año pasa a columna normal)
@@ -320,7 +320,7 @@ for i in range(8, len(df_reset) - 8):  # evita cortes con pocas observaciones
 results_df = pd.DataFrame(results, columns=['Trimestre', 'F_stat', 'p_value'])
 
 ################################################################################
-# 5️⃣ MOSTRAR RESULTADOS
+# MOSTRAR RESULTADOS
 ################################################################################
 
 best_break = results_df.loc[results_df['F_stat'].idxmax()]
