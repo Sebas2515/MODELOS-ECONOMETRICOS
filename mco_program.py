@@ -28,10 +28,14 @@ print(wb.active.title)    # Muestra el nombre de la hoja activa
 path = Path('DATA/model_program.xlsx')
 
 # Cargar la hoja específica para la tesis
-df = pd.read_excel(path, sheet_name='bd-tri', parse_dates=['Año'], index_col='Año')
+df = pd.read_excel(path, sheet_name='bd-tri', index_col=None)
 
 # Limpiar nombres de columnas (buena práctica)
 df.columns = df.columns.str.strip().str.replace(' ', '_')
+
+# ✅ Si la columna 'Año' está como índice, traerla de vuelta
+if 'Año' not in df.columns and df.index.name == 'Año':
+    df.reset_index(inplace=True)
 
 # Renombrar columnas para trabajar más fácil
 df = df.rename(columns={
@@ -61,16 +65,50 @@ df['dln_TIR'] = df['ln_TIR'].diff()
 df['dln_TE'] = df['ln_TE'].diff()
 df['dln_EP'] = df['ln_EP'].diff()
 
+# Crear variable de periodo trimestral
+df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
+
+# ✅ Crear dummy para quiebre estructural (ej. 2020Q3)
+df['dummy_quiebre'] = (df['Fecha'] >= '2020Q3').astype(int)
+
+# Centrar variables clave (restar la media)
+df['dln_EP_c'] = df['dln_EP'] - df['dln_EP'].mean()
+df['dln_TIR_c'] = df['dln_TIR'] - df['dln_TIR'].mean()
+df['dln_TE_c'] = df['dln_TE'] - df['dln_TE'].mean()
+df['dln_Ingfisca_c'] = df['dln_Ingfisca'] - df['dln_Ingfisca'].mean()
+
+# Crear interacciones
+df['EP_dummy'] = df['dln_EP_c'] * df['dummy_quiebre']
+df['TIR_dummy'] = df['dln_TIR_c'] * df['dummy_quiebre']
+df['TE_dummy'] = df['dln_TE_c'] * df['dummy_quiebre']
+df['Ing_dummy'] = df['dln_Ingfisca_c'] * df['dummy_quiebre']
+
+"""
+# ✅ (Opcional) Crear interacciones con las diferencias logarítmicas
+df['dummy_dln_TIR'] = df['dummy_quiebre'] * df['dln_TIR']
+df['dummy_dln_Ingfisca'] = df['dummy_quiebre'] * df['dln_Ingfisca']
+df['dummy_dln_TE'] = df['dummy_quiebre'] * df['dln_TE']
+df['dummy_dln_EP'] = df['dummy_quiebre'] * df['dln_EP']
+"""
 # Eliminar los primeros NaN generados por la diferencia
 df = df.dropna()
+
+# Verificar
+print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
+print(df['dummy_quiebre'].value_counts())
+
+
 """
+# Eliminar los primeros NaN generados por la diferencia
+df = df.dropna()
+
 # Creamos un nuevo DataFrame solo con las variables de interés (en logaritmos)
 df_log = df[['ln_PBI_log1', 'ln_Ingfisca_lag1', 'ln_TIR_lag1', 'ln_TE_lag1']].copy()
 print(df_log.head())
-"""
+
 print("\n--- 1. Datos transformados a diferencias logarítmicas ---")
 print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
-
+"""
 
 ################################################################################
 # PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
@@ -98,15 +136,24 @@ for name in cols_log:
 ###############################################################################
 # PASO 4: AJUSTE DEL MODELO MCO
 ################################################################################
+"""
+print(df.columns.tolist())
+df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
 
-# === Crear dummy para el quiebre estructural en T320 ===
-df['dummy_quiebre'] = 0
-df.loc[df['Año'] >= 'T320', 'dummy_quiebre'] = 1
+# Crear dummy para quiebre estructural en 2020Q3
+df['dummy_quiebre'] = (df['Fecha'] >= '2020Q3').astype(int)
 
-
+print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
+print(df['dummy_quiebre'].value_counts())
+"""
+"""
+print(df['Fecha'].head())
+print(df.dtypes)
+"""
 # Definir variables explicativas y dependiente
 Y = df['dln_PBI']
-X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE','dln_EP', 'dummy_quiebre']]
+X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP', 
+        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']]
 X = sm.add_constant(X)
 
 # 4️⃣ Ajustar modelo MCO simple
@@ -256,57 +303,9 @@ if jb_pvalue > 0.05:
 else:
     print("Se rechaza H0: los residuos no son normales")
 
-"""
-########################## PRUEBA DE ESTABILIDAD ESTRUCTURAL (JARQUE - BERA) ##########################
-
-from scipy import stats
-
-# Supongamos que 'df' tiene tu data de 2014-2024
-# Dividir en dos subperiodos
-df1 = df[df['AÑO'] <= 2018]
-df2 = df[df['AÑO'] > 2018]
-
-Y1 = df1['Ejecucion'] 
-X1 = sm.add_constant(df1[['ln_PIM', 'ln_Capacidad_recaudatoria', 'RDR']])
-
-Y2 = df2['Ejecucion'] 
-X2 = sm.add_constant(df2[['ln_PIM', 'ln_Capacidad_recaudatoria', 'RDR']])
-
-# Ajustar los modelos
-model_full = sm.OLS(Y, X).fit()
-model1 = sm.OLS(Y1, X1).fit()
-model2 = sm.OLS(Y2, X2).fit()
-
-# Número de observaciones y parámetros
-n1 = len(Y1)
-n2 = len(Y2)
-k = X.shape[1]  # número de parámetros incluyendo constante
-
-# Sum of Squared Residuals
-SSR_full = sum(model_full.resid ** 2)
-SSR1 = sum(model1.resid ** 2)
-SSR2 = sum(model2.resid ** 2)
-
-# Estadístico F de Chow
-numerador = (SSR_full - (SSR1 + SSR2)) / k
-denominador = (SSR1 + SSR2) / (n1 + n2 - 2*k)
-F_chow = numerador / denominador
-
-# p-value
-p_value = 1 - stats.f.cdf(F_chow, k, n1 + n2 - 2*k)
-
-print("📊 Test de Chow (estabilidad estructural)")
-print("F estadístico:", F_chow)
-print("p-value:", p_value)
-
-if p_value < 0.05:
-    print("Se rechaza H0: hay evidencia de cambio estructural")
-else:
-    print("No se rechaza H0: el modelo es estructuralmente estable")
-"""
 
 ################################################################################
-# 3️⃣ FUNCIÓN PARA EL TEST DE CHOW
+# 3️⃣ FUNCIÓN PARA EL TEST DE CHOW - ESTABILIDAD ESTRUCTURAL 
 ################################################################################
 from scipy import stats
 
@@ -315,14 +314,17 @@ def chow_test(df, split_index):
     
     # Dividir usando posición, no etiquetas (iloc)
     Y1 = df.iloc[:split_index]['dln_PBI']
-    X1 = sm.add_constant(df.iloc[:split_index][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
+    X1 = sm.add_constant(df.iloc[:split_index][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
+        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
     
     Y2 = df.iloc[split_index:]['dln_PBI']
-    X2 = sm.add_constant(df.iloc[split_index:][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
+    X2 = sm.add_constant(df.iloc[split_index:][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
+        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
     
     # Modelo completo
     Y_full = df['dln_PBI']
-    X_full = sm.add_constant(df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
+    X_full = sm.add_constant(df[[ 'dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
+        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
     
     model_full = sm.OLS(Y_full, X_full).fit()
     model1 = sm.OLS(Y1, X1).fit()
@@ -369,3 +371,8 @@ if best_break['p_value'] < 0.05:
 else:
     print(f"\n✅ No se rechaza H₀: el modelo es estable estructuralmente")
 
+
+
+# prueba: H0: dln_EP + dummy_dln_EP = 0
+t_test = model.t_test("dln_EP + dummy_dln_EP = 0")
+print(t_test)
