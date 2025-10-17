@@ -65,6 +65,7 @@ df['dln_TIR'] = df['ln_TIR'].diff()
 df['dln_TE'] = df['ln_TE'].diff()
 df['dln_EP'] = df['ln_EP'].diff()
 
+"""
 # Crear variable de periodo trimestral
 df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
 
@@ -76,26 +77,15 @@ df['dummy_dln_TIR'] = df['dummy_quiebre'] * df['dln_TIR']
 df['dummy_dln_Ingfisca'] = df['dummy_quiebre'] * df['dln_Ingfisca']
 df['dummy_dln_TE'] = df['dummy_quiebre'] * df['dln_TE']
 df['dummy_dln_EP'] = df['dummy_quiebre'] * df['dln_EP']
+"""
 
 # Eliminar los primeros NaN generados por la diferencia
 df = df.dropna()
 
 # Verificar
-print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
-print(df['dummy_quiebre'].value_counts())
-
-
-"""
-# Eliminar los primeros NaN generados por la diferencia
-df = df.dropna()
-
-# Creamos un nuevo DataFrame solo con las variables de interés (en logaritmos)
-df_log = df[['ln_PBI_log1', 'ln_Ingfisca_lag1', 'ln_TIR_lag1', 'ln_TE_lag1']].copy()
-print(df_log.head())
-
 print("\n--- 1. Datos transformados a diferencias logarítmicas ---")
 print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
-"""
+
 
 ################################################################################
 # PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
@@ -123,24 +113,10 @@ for name in cols_log:
 ###############################################################################
 # PASO 4: AJUSTE DEL MODELO MCO
 ################################################################################
-"""
-print(df.columns.tolist())
-df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
 
-# Crear dummy para quiebre estructural en 2020Q3
-df['dummy_quiebre'] = (df['Fecha'] >= '2020Q3').astype(int)
-
-print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
-print(df['dummy_quiebre'].value_counts())
-"""
-"""
-print(df['Fecha'].head())
-print(df.dtypes)
-"""
 # Definir variables explicativas y dependiente
 Y = df['dln_PBI']
-X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP', 
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']]
+X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']]
 X = sm.add_constant(X)
 
 # 4️⃣ Ajustar modelo MCO simple
@@ -210,7 +186,9 @@ vif_data['VIF'] = [variance_inflation_factor(X.values, i) for i in range(X.shape
 print(vif_data)
 
 
-########################## PRUEBA DE AUTOCORRELACION (DURBIN_WATSON) ##########################
+################################################################################
+# PASO 5: PRUEBA DE AUTOCORRELACION (DURBIN_WATSON)
+################################################################################
 
 from statsmodels.stats.stattools import durbin_watson
 
@@ -235,9 +213,9 @@ elif dw == 2.0:
 # DW < 2.0: Posible autocorrelación positiva.
 # DW > 2.0: Posible autocorrelación negativa.
 
-
-########################## PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE) ##########################
-
+################################################################################
+# PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE)
+################################################################################
 
 from statsmodels.stats.diagnostic import het_white
 # Test de White
@@ -263,7 +241,9 @@ else:
 # no se rechaza H0, lo que indica que no hay evidencia significativa de heterocedasticidad"""
 
 
-########################## PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA) ##########################
+################################################################################
+# PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA)
+################################################################################
 
 from statsmodels.stats.stattools import jarque_bera
 
@@ -301,17 +281,14 @@ def chow_test(df, split_index):
     
     # Dividir usando posición, no etiquetas (iloc)
     Y1 = df.iloc[:split_index]['dln_PBI']
-    X1 = sm.add_constant(df.iloc[:split_index][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
+    X1 = sm.add_constant(df.iloc[:split_index][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
     
     Y2 = df.iloc[split_index:]['dln_PBI']
-    X2 = sm.add_constant(df.iloc[split_index:][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
+    X2 = sm.add_constant(df.iloc[split_index:][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
     
     # Modelo completo
     Y_full = df['dln_PBI']
-    X_full = sm.add_constant(df[[ 'dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
+    X_full = sm.add_constant(df[[ 'dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP']])
     
     model_full = sm.OLS(Y_full, X_full).fit()
     model1 = sm.OLS(Y1, X1).fit()
@@ -358,8 +335,3 @@ if best_break['p_value'] < 0.05:
 else:
     print(f"\n✅ No se rechaza H₀: el modelo es estable estructuralmente")
 
-
-
-# prueba: H0: dln_EP + dummy_dln_EP = 0
-t_test = model.t_test("dln_EP + dummy_dln_EP = 0")
-print(t_test)
