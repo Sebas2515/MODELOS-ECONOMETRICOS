@@ -56,14 +56,15 @@ df['ln_PBI'] = np.log(df['PBI'])
 df['ln_Ingfisca'] = np.log(df['Ingfisca'])
 df['ln_TIR'] = np.log(df['TIR'])
 df['ln_TE'] = np.log(df['TE'])
+"""
 df['ln_EP'] = np.log(df['EP'])
-
+"""
 # Crear las diferencias logarítmicas (crecimientos porcentuales aproximados)
 df['dln_PBI'] = df['ln_PBI'].diff()
 df['dln_Ingfisca'] = df['ln_Ingfisca'].diff()
 df['dln_TIR'] = df['ln_TIR'].diff()
 df['dln_TE'] = df['ln_TE'].diff()
-df['dln_EP'] = df['ln_EP'].diff()
+
 
 """
 # Crear variable de periodo trimestral

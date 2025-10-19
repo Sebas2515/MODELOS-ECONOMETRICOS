@@ -33,7 +33,7 @@ df = pd.read_excel(path, sheet_name='bd-tri', index_col=None)
 # Limpiar nombres de columnas (buena práctica)
 df.columns = df.columns.str.strip().str.replace(' ', '_')
 
-# ✅ Si la columna 'Año' está como índice, traerla de vuelta
+#  Si la columna 'Año' está como índice, traerla de vuelta
 if 'Año' not in df.columns and df.index.name == 'Año':
     df.reset_index(inplace=True)
 
@@ -331,7 +331,7 @@ def chow_test(df, split_index):
     return F, p_value
 
 ################################################################################
-# EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
+# 4️⃣ EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
 ################################################################################
 
 # Reiniciamos el índice para que el loop funcione bien (Año pasa a columna normal)
@@ -345,7 +345,7 @@ for i in range(8, len(df_reset) - 8):  # evita cortes con pocas observaciones
 results_df = pd.DataFrame(results, columns=['Trimestre', 'F_stat', 'p_value'])
 
 ################################################################################
-# MOSTRAR RESULTADOS
+# 5️⃣ MOSTRAR RESULTADOS
 ################################################################################
 
 best_break = results_df.loc[results_df['F_stat'].idxmax()]
