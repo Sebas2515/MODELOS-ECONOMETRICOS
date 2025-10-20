@@ -7,6 +7,7 @@ from statsmodels.tsa.api import VAR
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tools.eval_measures import rmse, aic
 import statsmodels.api as sm
+from statsmodels.tsa.vector_ar.vecm import VECM
 
 ################################################################################
 # PASO 0: CONFIGURACIÓN Y CARGA DE DATOS
@@ -28,8 +29,6 @@ print("--- 1. Datos Cargados y Preparados ---")
 print(df.head())
 print("\nInformación del DataFrame:")
 df.info()
-
-
 
 ################################################################################
 # PASO 1: Convertirlo la serie en logaritmos 
@@ -173,12 +172,8 @@ def graficar_cointegracion(df, y_col, x_col):
     plt.tight_layout()
     plt.show()
 
-
-
 # --- Ejecutar para un par de variables cointegradas ---
 graficar_cointegracion(df_vecm, 'ln_SP', 'ln_PBI')
-
-
 
 ################################################################################
 # PASO 2: PRUEBA DE SELECCIÓN DE REZAGOS ÓPTIMOS (para VECM / VAR)
@@ -229,19 +224,192 @@ print("Signo negativo: la variable corrige desequilibrios; signo positivo: ampli
 ################################################################################
 # PASO 5: Diagnóstico visual (opcional)
 ################################################################################
-# Convertir los residuos a DataFrame con el mismo número de filas que vecm_fitted.resid
+
+# 1. Creamos el DataFrame de residuos
 residuals = pd.DataFrame(
     vecm_fitted.resid,
     columns=df_vecm.columns,
-    index=df_vecm.index[-vecm_fitted.resid.shape[0]:]  # ← ajusta automáticamente el índice
+    # Mantenemos el índice numérico por defecto, pero alineado al final del df_vecm
+    index=df_vecm.index[-vecm_fitted.resid.shape[0]:] 
 )
 
-# Gráfico de residuos por variable
-residuals.plot(subplots=True, figsize=(10, 6), title="Residuos del modelo VECM")
+# ==============================================================================
+# 🌟 LÓGICA COMPACTA: Generación y Sincronización de Etiquetas
+# ==============================================================================
+n_resid_periods = residuals.shape[0]
+n_total_periods = len(df_vecm)
+n_lags_omitted = n_total_periods - n_resid_periods
+
+# Generamos el PeriodIndex completo (asumiendo 2016Q1)
+full_period_index = pd.period_range(start='2016Q1', periods=n_total_periods, freq='Q').astype(str)
+
+# Tomamos el segmento de índice que corresponde a los residuos
+resid_labels = full_period_index[n_lags_omitted:].tolist() 
+resid_positions = np.arange(n_resid_periods)
+# ==============================================================================
+
+
+# 2. Gráfico de residuos por variable
+ax_list = residuals.plot(subplots=True, figsize=(12, 10), title="Residuos del modelo VECM")
+
+# Ajustar el eje X para que muestre el rango completo
+for ax in ax_list:
+    # 🌟 FORZAMOS POSICIONES Y ETIQUETAS
+    ax.set_xticks(resid_positions)
+    ax.set_xticklabels(resid_labels, rotation=45, ha='right')
+    
+    # 🌟 CORRECCIÓN CLAVE: Mostrar solo cada N-ésimo tick para evitar recorte y superposición
+    # Mantenemos solo una etiqueta cada 4 trimestres (inicio de año) para mayor legibilidad
+    for i, label in enumerate(ax.get_xticklabels()):
+        # Oculta las etiquetas que NO son el inicio de un bloque anual
+        if i % 4 != 0: 
+            label.set_visible(False)
+    
+    # Aseguramos que el eje X se extienda a todo el rango de datos
+    ax.set_xlim(resid_positions[0] - 0.5, resid_positions[-1] + 0.5) 
+
+    ax.axhline(0, color='grey', linestyle='--') 
+
 plt.tight_layout()
 plt.show()
 
+################################################################################
+# PRUEBA 1 - AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
+################################################################################
+from statsmodels.stats.stattools import durbin_watson
+from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 
+# residuales en un DataFrame
+resid = pd.DataFrame(vecm_fitted.resid, columns=vecm_fitted.names)
 
+# test Ljung-Box para cada residuo (puedes cambiar lags)
+lags = [4]
 
+print("\n=== PRUEBA DE AUTOCORRELACIÓN SERIAL (LJUNG–BOX) ===")
+for col in resid:
+    lb = acorr_ljungbox(resid[col], lags=lags, return_df=True)
+    p_value = lb['lb_pvalue'].iloc[-1] 
+# observa p-values; p < 0.05 indica autocorrelación
+# Condicional para interpretar los resultados
+    if p_value < 0.05:
+        print(f"❌ {col}: p-value = {p_value:.4f} → Hay autocorrelación en los residuos.")
+    else:
+        print(f"✅ {col}: p-value = {p_value:.4f} → No hay autocorrelación (residuos independientes).")
 
+################################################################################
+# PRUEBA 2 - HETEROCEDASTICIDAD (ARCH)
+################################################################################
+from statsmodels.stats.diagnostic import het_arch
+
+print("\n--- PRUEBA DE HETEROCEDASTICIDAD (ARCH) ---")
+for col in resid:
+    print(f"\nResiduo de {col}:")
+    arch_test = het_arch(resid[col])
+    f_stat, f_pvalue, lm_stat, lm_pvalue = arch_test
+
+    print(f"Estadístico F: {f_stat:.4f}  |  p-valor: {f_pvalue:.4f}")
+    print(f"Estadístico LM: {lm_stat:.4f} |  p-valor: {lm_pvalue:.4f}")
+
+    # Condicional interpretativa
+    if f_pvalue > 0.05 and lm_pvalue > 0.05:
+        print(f"✅ No hay evidencia de heterocedasticidad en {col} (varianza constante).")
+    else:
+        print(f"⚠️ Se detecta heterocedasticidad en {col} (p < 0.05). Posible varianza no constante.")
+
+################################################################################
+# PRUEBA 3 - NORMALIDAD (Jarque-Bera)
+################################################################################
+from scipy import stats
+
+print("\n--- PRUEBA DE NORMALIDAD (Jarque-Bera) ---")
+for col in resid:
+    jb = stats.jarque_bera(resid[col])
+    jb_stat, jb_pvalue = jb.statistic, jb.pvalue
+
+    print(f"{col}: JB = {jb_stat:.3f}, p-valor = {jb_pvalue:.4f}")
+
+    # Condicional interpretativa
+    if jb_pvalue > 0.05:
+        print(f"✅ No se rechaza la normalidad para {col} (residuos normales).")
+    else:
+        print(f"⚠️ Se rechaza la normalidad para {col} (residuos no normales, p < 0.05).")
+
+################################################################################
+# PRUEBA 4 - ESTABILIDAD DEL MODELO VAR
+################################################################################
+"""
+rint("\n--- PRUEBA DE ESTABILIDAD DEL MODELO VAR ---")
+
+stable = vecm_fitted.is_stable()
+print(f"¿El modelo es estable?: {'✅ Sí' if stable else '❌ No'}")
+
+roots = vecm_fitted.roots
+print("Raíces del polinomio AR:", np.round(roots, 4))
+
+# Interpretación adicional
+if np.all(np.abs(roots) < 1):
+    print("✅ Todas las raíces están dentro del círculo unitario → el modelo es dinámicamente estable.")
+else:
+    print("⚠️ Algunas raíces están fuera del círculo unitario → el modelo es inestable.")
+"""
+
+################################################################################
+# PRUEBA DE ESTABILIDAD DEL MODELO VECM (Solución Definitiva con .beta_matrices)
+################################################################################
+import numpy as np
+import matplotlib.pyplot as plt
+
+# --------------------------------------------------------------------------------
+# ⚠️ ADJUNTE ESTE BLOQUE INMEDIATAMENTE DESPUÉS DE: vecm_fitted = vecm_model.fit()
+# --------------------------------------------------------------------------------
+
+print("\n--- PRUEBA DE ESTABILIDAD DEL MODELO VECM (Método Final) ---")
+
+try:
+    # Parámetros del modelo
+    k_endog = vecm_fitted.neqs    # k = 6
+    k_ar = vecm_fitted.k_ar       # p = 4
+
+    # 1. Extraer las matrices A_i del VAR subyacente
+    # Este atributo contiene [A1, A2, ..., Ap]. Es un array de arrays (4 x 6 x 6)
+    A_matrices = vecm_fitted.beta_matrices 
+
+    # 2. Construir la Matriz Companion C ((k*p) x (k*p)) -> (24 x 24)
+    Companion_matrix = np.zeros((k_endog * k_ar, k_endog * k_ar))
+    
+    # Fila superior: [A1, A2, A3, A4]
+    Companion_matrix[:k_endog, :] = np.hstack(A_matrices)
+    
+    # Bloque inferior: Matriz Identidad desplazada I_{k(p-1)}
+    Companion_matrix[k_endog:, :-k_endog] = np.eye(k_endog * (k_ar - 1))
+
+    # 3. Calcular valores propios y evaluar estabilidad
+    eigvals = np.linalg.eigvals(Companion_matrix)
+    abs_eigvals = np.abs(eigvals)
+    max_root = np.max(abs_eigvals)
+
+    print(f"\nDimensión Matriz Companion: {Companion_matrix.shape}")
+    print(f"Valor propio con mayor módulo (máx. raíz): {max_root:.4f}")
+
+    if max_root < 1.0001:
+        print("✅ El modelo VECM es estable.")
+        print("   (La raíz máxima es cercana a 1.0, lo cual es esperado por la cointegración).")
+    else:
+        print(f"⚠️ El modelo VECM NO es estable (máximo módulo: {max_root:.4f} > 1.0).")
+
+    # --- Gráfico de Raíces ---
+    plt.figure(figsize=(6, 6))
+    circle = plt.Circle((0, 0), 1, color='gray', fill=False, linestyle='--', label='Círculo unitario')
+    plt.gca().add_artist(circle)
+    plt.scatter(eigvals.real, eigvals.imag, color='blue', label='Raíces del VECM')
+    plt.title("Estabilidad del VECM (Matriz Companion Final)")
+    plt.xlabel("Parte Real")
+    plt.ylabel("Parte Imaginaria")
+    plt.legend()
+    plt.grid(True)
+    plt.axis('equal')
+    plt.show()
+
+except Exception as e:
+    print(f"❌ Error Irresoluble: La extracción con '.beta_matrices' falló. {e}")
+    print("El error de tipado persiste. Sugerencia: Intente ajustar el VECM sin el término determinístico: deterministic=None, para aislar el error.")

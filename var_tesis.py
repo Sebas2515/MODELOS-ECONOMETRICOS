@@ -14,7 +14,7 @@ import statsmodels.api as sm
 path = Path('DATA/bd_tesis.xlsx')
 
 # Cargar la hoja específica para la tesis
-df = pd.read_excel(path, sheet_name='bdat_tes', parse_dates=['Fecha'], index_col='Fecha')
+df = pd.read_excel(path, sheet_name='bdat_tes', parse_dates=['Año'], index_col='Año')
 
 # Limpiar nombres de columnas (buena práctica)
 df.columns = df.columns.str.strip().str.replace(' ', '_')
