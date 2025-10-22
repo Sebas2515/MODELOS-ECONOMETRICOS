@@ -40,6 +40,21 @@ df = df.rename(columns={
 })
 
 ################################################################################
+# Crear un nuevo DataFrame limpio (sin valores nulos)
+################################################################################
+df_clean = df.dropna().copy()
+
+print("\n--- 2. DataFrame Limpio (sin valores nulos) ---")
+print(df_clean.head())
+print("\nNúmero de observaciones finales:", len(df_clean))
+
+################################################################################
+# Confirmar nombres finales de columnas
+################################################################################
+print("\nColumnas finales disponibles:")
+print(df_clean.columns.tolist())
+
+################################################################################
 # PASO 3: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
 ################################################################################
 
@@ -81,28 +96,6 @@ df_n_diff = df_n.diff().dropna()
 for name, column in df_n_diff.items():
     adf_test(column, name=f'{name}_diff')
 
-
-
-
-
-
-"""
-################################################################################
-# PASO 1: Convertirlo la serie en logaritmos 
-################################################################################
-
-df['ln_SP'] = np.log(df['S&P'])
-df['ln_PBI'] = np.log(df['PBI'])
-df['ln_TCRM'] = np.log(df['TCRM'])
-df['ln_TIR'] = np.log(df['TIR'])  
-df['ln_IPC'] = np.log(df['IPC'])
-df['ln_Empleo'] = np.log(df['Empleo'])
-    
-# Creamos un nuevo DataFrame solo con las variables de interés (en logaritmos)
-df_log = df[['ln_SP', 'ln_PBI', 'ln_TCRM', 'ln_TIR', 'ln_IPC', 'ln_Empleo']].copy()
-
-print(df_log.head())
-"""
 ################################################################################
 # MODELO ALTERNATIVO: VECM (Vector Error Correction Model) - SERIES ORIGINALES
 ################################################################################
@@ -112,6 +105,7 @@ from statsmodels.tsa.vector_ar.vecm import coint_johansen, VECM
 # Seleccionamos las series originales (no logarítmicas)
 cols_n = [col for col in df.columns if col.startswith('N_')]
 df_vecm = df[cols_n].dropna()
+print(df_vecm.columns)
 
 ################################################################################
 # PASO 1: PRUEBA DE COINTEGRACIÓN DE JOHANSEN (con interpretación automática)
@@ -148,4 +142,180 @@ else:
         relation = " + ".join([f"{coef:.3f}*{var}" for coef, var in zip(eigenvectors[:, i], variables)])
         print(relation)
 
+################################################################################
+# VISUALIZACIÓN Y ANÁLISIS DE COINTEGRACIÓN ENTRE DOS SERIES (EN NIVEL)
+################################################################################
+def graficar_cointegracion(df, y_col, x_col):
+    """
+    Analiza y grafica la relación de cointegración entre dos series en nivel.
+    Muestra tanto la trayectoria conjunta (largo plazo) como las desviaciones (residuos).
+    """
+    y = df[y_col]
+    x = df[x_col]
+    n_periods = len(df)  # Número total de observaciones (trimestres)
 
+    # --- Estimamos la relación de largo plazo (OLS) ---
+    model_lr = sm.OLS(y, sm.add_constant(x)).fit()
+    y_eq = model_lr.predict(sm.add_constant(x))
+    residuals = y - y_eq
+
+    # --- Resultados principales ---
+    print("\n===============================")
+    print(f"Relación de Cointegración: {y_col} ~ {x_col}")
+    print("===============================")
+    print(model_lr.summary().tables[1])
+    print(f"R² ajustado: {model_lr.rsquared_adj:.3f}")
+    print(f"Media de los residuos: {residuals.mean():.6f}")
+    print(f"Desviación estándar de residuos: {residuals.std():.6f}\n")
+
+    # --- Interpretación automática ---
+    if model_lr.rsquared_adj > 0.5:
+        print("✅ Las series muestran una fuerte relación de largo plazo (cointegración probable).")
+    elif model_lr.rsquared_adj > 0.2:
+        print("⚠️ Relación moderada, posible cointegración parcial.")
+    else:
+        print("❌ Relación débil, poca evidencia de cointegración.\n")
+
+    # ==================================================================
+    # 🌟 CREACIÓN COMPACTA DE ETIQUETAS DE TIEMPO (si no tienes un índice temporal)
+    index_labels = pd.period_range(start='2015Q2', periods=n_periods, freq='Q').astype(str).tolist()
+    index_positions = np.arange(n_periods)
+    # ==================================================================
+
+    # --- Gráfico 1: series y equilibrio de largo plazo ---
+    plt.figure(figsize=(12, 6))
+    
+    plt.plot(index_positions, y, label=y_col, lw=2)
+    plt.plot(index_positions, x, '--', label=x_col)
+    plt.plot(index_positions, y_eq, ':', label='Equilibrio estimado', color='green')
+    
+    plt.title(f'{y_col} vs {x_col} (Relación de largo plazo)')
+    plt.xlabel('Trimestre (Año)')
+    plt.ylabel('Nivel de las variables')
+    
+    plt.xticks(ticks=index_positions, labels=index_labels, rotation=45, ha='right')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    # --- Gráfico 2: residuos ---
+    plt.figure(figsize=(12, 5))
+    plt.plot(index_positions, residuals, color='darkred')
+    plt.axhline(0, color='black', ls='--')
+    plt.title(f'Residuos de la relación {y_col} ~ {x_col}')
+    plt.xlabel('Trimestre (Año)')
+    plt.ylabel('Desviación respecto al equilibrio')
+    plt.xticks(ticks=index_positions, labels=index_labels, rotation=45, ha='right')
+    plt.tight_layout()
+    plt.show()
+
+# --- EJECUCIÓN EJEMPLO (ajusta los nombres a tus variables reales) ---
+graficar_cointegracion(df_vecm, 'N_S&P', 'N_TCRM')
+"""
+################################################################################
+# PASO 2: PRUEBA DE SELECCIÓN DE REZAGOS ÓPTIMOS (para VECM / VAR)
+################################################################################
+
+from statsmodels.tsa.api import VAR
+
+print("\n--- PRUEBA DE SELECCIÓN DE LAGS ÓPTIMOS ---")
+
+# Usamos las series diferenciadas o logarítmicas según tu caso (df_log_diff o df_log)
+# Para VECM se recomienda usar las series en nivel pero estacionarias en diferencia
+model_lag = VAR(df_vecm.dropna())
+
+# Evaluamos hasta 8 rezagos, por ejemplo
+lag_selection = model_lag.select_order(maxlags=4)
+
+# Mostramos la tabla con los valores de los criterios
+print(lag_selection.summary())
+
+# Extraemos el número de rezagos óptimos según cada criterio
+optimal_lags = lag_selection.selected_orders
+print("\nNúmero de rezagos óptimos según cada criterio:")
+for criterio, valor in optimal_lags.items():
+    print(f"{criterio.upper()}: {valor}")
+
+# Interpretación automática (opcional)
+best_lag = optimal_lags['aic']
+print(f"\n✅ Según el Criterio de Akaike (AIC), el número óptimo de rezagos es: {best_lag}")
+
+################################################################################
+# PASO 3: Ajuste del modelo VECM
+################################################################################
+print("\n--- ESTIMACIÓN DEL MODELO VECM ---")
+
+# Determinar número de cointegraciones (supongamos 1 si la traza > valor crítico)
+vecm_model = VECM(df_vecm, k_ar_diff=best_lag, coint_rank=num_coint, deterministic='co')  # 'co' incluye constante en el término de cointegración
+vecm_fitted = vecm_model.fit()
+
+print(vecm_fitted.summary())
+
+################################################################################
+# PASO 4: Interpretación del término de corrección de error
+################################################################################
+print("\n--- INTERPRETACIÓN DEL TÉRMINO DE CORRECCIÓN DE ERROR ---")
+print("Cada coeficiente alfa indica la velocidad de ajuste hacia el equilibrio de largo plazo.")
+print("Signo negativo: la variable corrige desequilibrios; signo positivo: amplifica los choques.\n")
+
+################################################################################
+# PASO 5: Diagnóstico visual (opcional)
+################################################################################
+# Convertir los residuos a DataFrame con el mismo número de filas que vecm_fitted.resid
+residuals = pd.DataFrame(
+    vecm_fitted.resid,
+    columns=df_vecm.columns,
+    index=df_vecm.index[-vecm_fitted.resid.shape[0]:]  # ← ajusta automáticamente el índice
+)
+
+# Gráfico de residuos por variable
+residuals.plot(subplots=True, figsize=(10, 6), title="Residuos del modelo VECM")
+plt.tight_layout()
+plt.show()
+"""
+
+################################################################################
+# PASO 2: PRUEBA DE SELECCIÓN DE REZAGOS ÓPTIMOS (para VECM / VAR)
+################################################################################
+
+from statsmodels.tsa.api import VAR
+from statsmodels.tsa.vector_ar.vecm import VECM
+
+print("\n--- 2. SELECCIÓN DE REZAGOS ÓPTIMOS ---")
+
+# Usamos el DataFrame limpio y ya transformado (en niveles)
+model_lag = VAR(df_clean.dropna())
+
+# Evaluamos hasta 4 rezagos (puedes ajustar a 8 si tu serie es trimestral)
+lag_selection = model_lag.select_order(maxlags=4)
+
+# Mostramos la tabla con los criterios de información
+print(lag_selection.summary())
+
+# Extraemos el número de rezagos óptimos según cada criterio
+optimal_lags = lag_selection.selected_orders
+print("\nNúmero de rezagos óptimos según cada criterio:")
+for criterio, valor in optimal_lags.items():
+    print(f"{criterio.upper()}: {valor}")
+
+# Selección principal (por AIC, pero podrías usar HQIC o BIC)
+best_lag = optimal_lags.get('aic', 1)
+print(f"\n✅ Según el Criterio de Akaike (AIC), el número óptimo de rezagos es: {best_lag}")
+
+################################################################################
+# PASO 3: ESTIMACIÓN DEL MODELO VECM
+################################################################################
+print("\n--- 3. ESTIMACIÓN DEL MODELO VECM ---")
+
+# ⚠️ Asegúrate de definir antes `num_coint` según tu prueba de Johansen
+# Ejemplo: num_coint = 1  # número de relaciones cointegradas detectadas
+
+vecm_model = VECM(
+    df_clean,
+    k_ar_diff=best_lag,
+    coint_rank=num_coint,
+    deterministic='co'  # incluye constante en la relación de cointegración
+)
+
+vecm_fitted = vecm_model.fit()
+print(vecm_fitted.summary())

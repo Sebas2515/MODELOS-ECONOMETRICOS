@@ -69,10 +69,10 @@ def adf_test(series, name=''):
     print(f'ADF Statistic: {result[0]:.4f}')
     print(f'p-value: {result[1]:.4f}')
     if result[1] <= 0.05:
-        print("Resultado: Evidencia fuerte contra la hipótesis nula (H0), la serie es estacionaria.\n")
+        print("✅ Serie estacionaria.")
     else:
-        print("Resultado: Evidencia débil contra H0, la serie tiene una raíz unitaria y es no-estacionaria.\n")
-
+        print("❌ Serie no estacionaria (tiene raíz unitaria).")
+        
 # =====================================
 # 3.1 Verificando Estacionariedad SOLO en las series logarítmicas
 # =====================================
@@ -129,12 +129,13 @@ model_fitted = model.fit(optimal_lags)
 print("\n--- 6. Resumen del Modelo VAR ---")
 print(model_fitted.summary())
 
+"""
 # Este modelo se estima solo para ver como se comportarian las variables con 8 rezagos
 model = VAR(df[['ln_PBI', 'ln_SP', 'ln_TCRM']])
 lag_order = model.select_order(maxlags=8)
 print(lag_order.summary())
-
 """
+
 ################################################################################
 # PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (corregido)
 ################################################################################
@@ -182,7 +183,6 @@ for i, var in enumerate(variables):
 axes[-1].set_xlabel('Horizonte (periodos)')
 plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
-"""
 
 ################################################################################
 # PRUEBA 1 - AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
