@@ -8,7 +8,7 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.tools.eval_measures import rmse, aic
 import statsmodels.api as sm
 from statsmodels.tsa.vector_ar.vecm import VECM
-from scipy import stats
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 ################################################################################
 # PASO 0: CONFIGURACIÓN Y CARGA DE DATOS
@@ -37,6 +37,14 @@ df = df.rename(columns={
     'TIR':'N_TIR',
     'S&P':'N_S&P',
 })
+
+# ✅ Crear dummy para quiebre estructural (ej. 2021Q3)
+df['dummy_quiebre'] = (df.index >= '2021Q3').astype(int)
+
+# Verificar
+print(df[['dummy_quiebre']].tail(10))
+print(df['dummy_quiebre'].value_counts())
+
 
 ################################################################################
 # Crear un nuevo DataFrame limpio (sin valores nulos)
@@ -94,15 +102,136 @@ print(lag_selection.summary())
 optimal_lags = lag_selection.selected_orders['aic']
 print(f"\n✅ Según el Criterio de Akaike (AIC), el número óptimo de rezagos es: {optimal_lags}")
 
-
+###############################################################################
+# PASO 4: ESTIMACIÓN DEL VAR CON DUMMY EXÓGENA
 ################################################################################
-# PASO 5: AJUSTE DEL MODELO VAR
-################################################################################
-model_fitted = model.fit(optimal_lags)
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.statespace.varmax import VARMAX
 
-print("\n--- 6. Resumen del Modelo VAR ---")
+print("\n--- 6. Estimación del VAR con dummy exógena ---")
+
+# Ajustar tamaño de dummy (dropna alinea las fechas)
+df_dummy = df_clean.loc[df_n_diff.index, ['dummy_quiebre']]
+
+# Estimación del VAR con dummy exógena
+model = VAR(df_n_diff, exog=df_dummy)
+model_fitted = model.fit(optimal_lags, trend='c')
+
 print(model_fitted.summary())
+###############################################################################
+# PASO 4: PRUEBA DE CORRELACIÓN
+################################################################################
 
+# Seleccionar variables que quieres correlacionar
+cols = df_n_diff.columns.tolist()
+
+# Calcular matriz de correlaciones
+corr_matrix = df_n_diff[cols].corr()
+
+# Mostrar matriz en consola
+print("\n=== Matriz de Correlaciones ===")
+print(corr_matrix.round(3))
+
+# Visualizar matriz con heatmap
+plt.figure(figsize=(8,6))
+sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+plt.title('Heatmap de Correlaciones')
+plt.show()
+.0
+
+################################################################################
+# PASO 5: PRUEBA DE MULTICOLINEALIDAD (VIF)
+################################################################################
+print("\n=== 5. Prueba de Multicolinealidad (VIF) ===")
+
+# Seleccionar solo variables endógenas (sin dummy)
+X = df_n_diff.values
+columnas = df_n_diff.columns
+
+# Calcular VIF
+vif_data = pd.DataFrame({
+    'Variable': columnas,
+    'VIF': [variance_inflation_factor(X, i) for i in range(X.shape[1])]
+})
+
+# Mostrar resultados con interpretación
+for i in range(len(vif_data)):
+    var = vif_data.loc[i, 'Variable']
+    vif_val = vif_data.loc[i, 'VIF']
+
+    if vif_val < 5:
+        interpret = "✅ Bajo riesgo de multicolinealidad"
+    elif vif_val < 10:
+        interpret = "⚠️ Moderado riesgo de multicolinealidad"
+    else:
+        interpret = "❌ Alto riesgo de multicolinealidad"
+
+    print(f"{var:>10}: VIF = {vif_val:.2f} → {interpret}")
+
+# Mostrar tabla completa
+print("\nTabla resumen del VIF:")
+print(vif_data.round(3))
+
+################################################################################
+# PASO X: PRUEBA DE CAUSALIDAD DE GRANGER
+################################################################################
+from statsmodels.tsa.stattools import grangercausalitytests
+
+# --- Selecciona las variables endógenas de tu modelo VAR ---
+endog_vars = df[['N_S&P', 'N_TIR']]  # Ajusta a tus variables endógenas
+max_lag = optimal_lags  # Usa el número de rezagos óptimo de tu VAR
+
+print("\n=== Prueba de Causalidad de Granger ===")
+
+for caused in endog_vars.columns:
+    for causing in endog_vars.columns:
+        if caused != causing:
+            print(f"\n→ Probamos si '{causing}' causa a '{caused}' (en sentido de Granger):")
+            test_result = grangercausalitytests(endog_vars[[caused, causing]], maxlag=max_lag, verbose=False)
+
+            # Extrae el p-valor del test F para el último rezago
+            f_test_pvalue = test_result[max_lag][0]['ssr_ftest'][1]
+
+            if f_test_pvalue < 0.05:
+                print(f"   ✅ Se rechaza H0: '{causing}' causa a '{caused}' (p = {f_test_pvalue:.4f})")
+            else:
+                print(f"   ❌ No se rechaza H0: '{causing}' NO causa a '{caused}' (p = {f_test_pvalue:.4f})")
+
+###############################################################################
+# PASO 7: ESTABILIDAD DEL MODELO VARMAX
+###############################################################################
+print("\n--- 8. Estabilidad del VAR ---")
+
+try:
+    # Raíces del polinomio AR
+    ar_roots = model_fitted.roots
+    print("Raíces del polinomio AR:")
+    print(ar_roots)
+
+    if all(np.abs(ar_roots) > 1):
+        print("✅ El modelo es estable (todas las raíces están fuera del círculo unitario).")
+    else:
+        print("⚠️ El modelo NO es estable (algunas raíces están dentro del círculo unitario).")
+except Exception as e:
+    print("⚠️ Error al calcular las raíces AR:", str(e))
+
+###############################################################################
+# PASO 8: RESIDUOS DEL MODELO VARMAX
+###############################################################################
+print("\n--- 9. Análisis de los residuos ---")
+
+# Extraer residuos en DataFrame con nombres correctos
+resid = pd.DataFrame(model_fitted.resid, columns=model_fitted.names)
+print(resid.head())
+
+# Graficar residuos
+fig, axes = plt.subplots(len(resid.columns), 1, figsize=(10, 6), sharex=True)
+for i, col in enumerate(resid.columns):
+    axes[i].plot(resid.index.to_timestamp(), resid[col], label=f"Residuos {col}")
+    axes[i].axhline(0, color='red', linestyle='--', linewidth=1)
+    axes[i].legend()
+plt.tight_layout()
+plt.show()
 
 ################################################################################
 # PRUEBA 1 - AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
@@ -111,13 +240,13 @@ from statsmodels.stats.stattools import durbin_watson
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 
 # residuales en un DataFrame
-resid = pd.DataFrame(model_fitted.resid, columns=model_fitted.names)
+resid = pd.DataFrame(model_fitted.resid, columns=df_n_diff.columns)
 
 # test Ljung-Box para cada residuo (puedes cambiar lags)
 lags = [optimal_lags]
 
 print("\n=== PRUEBA DE AUTOCORRELACIÓN SERIAL (LJUNG–BOX) ===")
-for col in resid:
+for col in resid.columns:
     lb = acorr_ljungbox(resid[col], lags=lags, return_df=True)
     p_value = lb['lb_pvalue'].iloc[-1] 
 # observa p-values; p < 0.05 indica autocorrelación
@@ -214,7 +343,6 @@ axes[-1].set_xlabel('Horizonte (periodos)')
 plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
 
-
 ################################################################################
 # PRUEBA DE QUIEBRE ESTRUCTURAL (CHOW) 
 ################################################################################
@@ -292,18 +420,6 @@ if best_break['p_value'] < 0.05:
     print(f"\n❌ Se rechaza H₀ → Cambio estructural detectado en {best_break['Periodo']}")
 else:
     print(f"\n✅ No se rechaza H₀ → El modelo es estable estructuralmente")
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 """

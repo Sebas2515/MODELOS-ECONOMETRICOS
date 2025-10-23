@@ -8,7 +8,6 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.tools.eval_measures import rmse, aic
 import statsmodels.api as sm
 from statsmodels.tsa.vector_ar.vecm import VECM
-from scipy import stats
 
 ################################################################################
 # PASO 0: CONFIGURACIÓN Y CARGA DE DATOS
@@ -37,6 +36,14 @@ df = df.rename(columns={
     'TIR':'N_TIR',
     'S&P':'N_S&P',
 })
+
+# ✅ Crear dummy para quiebre estructural (ej. 2021Q3)
+df['dummy_quiebre'] = (df.index >= '2021Q3').astype(int)
+
+# Verificar
+print(df[['dummy_quiebre']].tail(10))
+print(df['dummy_quiebre'].value_counts())
+
 
 ################################################################################
 # Crear un nuevo DataFrame limpio (sin valores nulos)
@@ -94,15 +101,66 @@ print(lag_selection.summary())
 optimal_lags = lag_selection.selected_orders['aic']
 print(f"\n✅ Según el Criterio de Akaike (AIC), el número óptimo de rezagos es: {optimal_lags}")
 
-
 ################################################################################
-# PASO 5: AJUSTE DEL MODELO VAR
+# PASO 5: ESTIMACIÓN DEL VARMAX CON DUMMY EXÓGENA
 ################################################################################
-model_fitted = model.fit(optimal_lags)
+from statsmodels.tsa.statespace.varmax import VARMAX
 
-print("\n--- 6. Resumen del Modelo VAR ---")
+print("\n--- 6. Estimación del VARMAX con dummy exógena ---")
+
+# Alinear dummy con las fechas de df_n_diff
+df_dummy = df_clean.loc[df_n_diff.index, ['dummy_quiebre']]
+
+# Ajustar modelo VARMAX (orden p = optimal_lags, q = 0)
+model_varmax = VARMAX(
+    df_n_diff,
+    exog=df_dummy,
+    order=(optimal_lags, 0),
+    trend='c'
+)
+
+# Estimar modelo
+model_fitted = model_varmax.fit(disp=False, maxiter=500)
+
+print("\n--- 7. Resumen del Modelo VARMAX ---")
 print(model_fitted.summary())
 
+
+###############################################################################
+# PASO 7: ESTABILIDAD DEL MODELO VARMAX
+###############################################################################
+print("\n--- 8. Estabilidad del VAR ---")
+
+try:
+    # Raíces del polinomio AR
+    ar_roots = model_fitted.roots
+    print("Raíces del polinomio AR:")
+    print(ar_roots)
+
+    if all(np.abs(ar_roots) > 1):
+        print("✅ El modelo es estable (todas las raíces están fuera del círculo unitario).")
+    else:
+        print("⚠️ El modelo NO es estable (algunas raíces están dentro del círculo unitario).")
+except Exception as e:
+    print("⚠️ Error al calcular las raíces AR:", str(e))
+
+###############################################################################
+# PASO 8: RESIDUOS DEL MODELO VARMAX
+###############################################################################
+print("\n--- 9. Análisis de los residuos ---")
+
+# Extraer residuos en DataFrame con nombres correctos
+resid = pd.DataFrame(model_fitted.resid)
+print(resid.head())
+
+# Graficar residuos
+fig, axes = plt.subplots(len(resid.columns), 1, figsize=(10, 6), sharex=True)
+for i, col in enumerate(resid.columns):
+    axes[i].plot(resid.index.to_timestamp(), resid[col], label=f"Residuos {col}")
+    axes[i].axhline(0, color='red', linestyle='--', linewidth=1)
+    axes[i].legend()
+plt.tight_layout()
+plt.show()
 
 ################################################################################
 # PRUEBA 1 - AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
@@ -111,13 +169,13 @@ from statsmodels.stats.stattools import durbin_watson
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
 
 # residuales en un DataFrame
-resid = pd.DataFrame(model_fitted.resid, columns=model_fitted.names)
+resid = pd.DataFrame(model_fitted.resid, columns=df_n_diff.columns)
 
 # test Ljung-Box para cada residuo (puedes cambiar lags)
 lags = [optimal_lags]
 
 print("\n=== PRUEBA DE AUTOCORRELACIÓN SERIAL (LJUNG–BOX) ===")
-for col in resid:
+for col in resid.columns:
     lb = acorr_ljungbox(resid[col], lags=lags, return_df=True)
     p_value = lb['lb_pvalue'].iloc[-1] 
 # observa p-values; p < 0.05 indica autocorrelación
@@ -165,46 +223,50 @@ for col in resid:
     else:
         print(f"⚠️ Se rechaza la normalidad para {col} (residuos no normales, p < 0.05).")
 
-
 ################################################################################
-# PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (corregido)
+# PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (VAR reestimado)
 ################################################################################
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from statsmodels.tsa.api import VAR
 
-# Generar las funciones impulso-respuesta
-irf = model_fitted.irf(8)  # horizonte de 8 períodos
+# Reestimación del VAR (sin exógenas) solo para IRF
+model_irf = VAR(df_n_diff)  # df_n_diff = tus series endógenas transformadas
+model_irf_fitted = model_irf.fit(optimal_lags)  # usar el número óptimo de rezagos
+
+# Generar las funciones impulso-respuesta a 8 periodos
+irf = model_irf_fitted.irf(8)
 
 # Configurar estilo visual moderno
 plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_context("talk")
 
-# Obtener nombres de variables y horizonte
-variables = model_fitted.names
-response = 'N_S&P'
+# Nombres de variables y horizonte
+variables = model_irf_fitted.names
+response = 'N_S&P'  # variable endógena principal
 h = irf.irfs.shape[0]
 
 # Crear figura
 fig, axes = plt.subplots(len(variables), 1, figsize=(8, 10), sharex=True)
-fig.suptitle('Funciones Impulso-Respuesta para N_S&P', fontsize=18, weight='bold')
+fig.suptitle(f'Funciones Impulso-Respuesta para {response}', fontsize=18, weight='bold')
 
 colors = sns.color_palette("deep", len(variables))
 
 # Graficar cada IRF
 for i, var in enumerate(variables):
-    # Respuesta media
-    irf_line = irf.irfs[:, variables.index(var), model_fitted.names.index(response)]
+    # Respuesta media ante choque en var
+    irf_line = irf.irfs[:, variables.index(var), variables.index(response)]
     # Error estándar y límites (±2σ)
-    se = irf.stderr()[..., variables.index(var), model_fitted.names.index(response)]
+    se = irf.stderr(irf_line.shape[0])[:, variables.index(var), variables.index(response)]
     lower = irf_line - 2 * se
     upper = irf_line + 2 * se
-    
+
     # Línea principal
     axes[i].plot(irf_line, color=colors[i], lw=2.2, label=f'Choque en {var}')
     # Banda de confianza
     axes[i].fill_between(np.arange(h), lower, upper, color=colors[i], alpha=0.2)
-    
+
     axes[i].axhline(0, color='black', lw=1, linestyle='--')
     axes[i].set_ylabel('Respuesta')
     axes[i].legend(loc='upper right')
@@ -213,7 +275,6 @@ for i, var in enumerate(variables):
 axes[-1].set_xlabel('Horizonte (periodos)')
 plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
-
 
 ################################################################################
 # PRUEBA DE QUIEBRE ESTRUCTURAL (CHOW) 
@@ -228,12 +289,13 @@ df_diff.columns = [col + "_diff" for col in df_diff.columns]
 print("\n--- 2️⃣ Columnas diferenciadas disponibles ---")
 print(df_diff.columns.tolist())
 
+
 ################################################################################
 # PASO 2: DEFINIR FUNCIÓN DEL TEST DE CHOW
 ################################################################################
 
 def chow_test(df, split_index, dep_var, indep_vars):
-    """Realiza el test de Chow para detectar quiebres estructurales"""
+    #"""Realiza el test de Chow para detectar quiebres estructurales"""
     
     Y1 = df.iloc[:split_index][dep_var]
     X1 = sm.add_constant(df.iloc[:split_index][indep_vars])
@@ -295,15 +357,25 @@ else:
 
 
 
+"""
+################################################################################
+# PRUEBA 4 - ESTABILIDAD DEL MODELO VAR
+################################################################################
+print("\n--- PRUEBA DE ESTABILIDAD DEL MODELO VAR ---")
 
+stable = model_fitted.is_stable()
+print(f"¿El modelo es estable?: {'✅ Sí' if stable else '❌ No'}")
 
+roots = model_fitted.roots
+print("Raíces del polinomio AR:", np.round(roots, optimal_lags))
 
+# Interpretación adicional
+if np.all(np.abs(roots) < 1):
+    print("✅ Todas las raíces están dentro del círculo unitario → el modelo es dinámicamente estable.")
+else:
+    print("⚠️ Algunas raíces están fuera del círculo unitario → el modelo es inestable.")
 
-
-
-
-
-
+"""
 
 
 """

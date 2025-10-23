@@ -211,68 +211,6 @@ def graficar_cointegracion(df, y_col, x_col):
 
 # --- EJECUCIÓN EJEMPLO (ajusta los nombres a tus variables reales) ---
 graficar_cointegracion(df_vecm, 'N_S&P', 'N_TCRM')
-"""
-################################################################################
-# PASO 2: PRUEBA DE SELECCIÓN DE REZAGOS ÓPTIMOS (para VECM / VAR)
-################################################################################
-
-from statsmodels.tsa.api import VAR
-
-print("\n--- PRUEBA DE SELECCIÓN DE LAGS ÓPTIMOS ---")
-
-# Usamos las series diferenciadas o logarítmicas según tu caso (df_log_diff o df_log)
-# Para VECM se recomienda usar las series en nivel pero estacionarias en diferencia
-model_lag = VAR(df_vecm.dropna())
-
-# Evaluamos hasta 8 rezagos, por ejemplo
-lag_selection = model_lag.select_order(maxlags=4)
-
-# Mostramos la tabla con los valores de los criterios
-print(lag_selection.summary())
-
-# Extraemos el número de rezagos óptimos según cada criterio
-optimal_lags = lag_selection.selected_orders
-print("\nNúmero de rezagos óptimos según cada criterio:")
-for criterio, valor in optimal_lags.items():
-    print(f"{criterio.upper()}: {valor}")
-
-# Interpretación automática (opcional)
-best_lag = optimal_lags['aic']
-print(f"\n✅ Según el Criterio de Akaike (AIC), el número óptimo de rezagos es: {best_lag}")
-
-################################################################################
-# PASO 3: Ajuste del modelo VECM
-################################################################################
-print("\n--- ESTIMACIÓN DEL MODELO VECM ---")
-
-# Determinar número de cointegraciones (supongamos 1 si la traza > valor crítico)
-vecm_model = VECM(df_vecm, k_ar_diff=best_lag, coint_rank=num_coint, deterministic='co')  # 'co' incluye constante en el término de cointegración
-vecm_fitted = vecm_model.fit()
-
-print(vecm_fitted.summary())
-
-################################################################################
-# PASO 4: Interpretación del término de corrección de error
-################################################################################
-print("\n--- INTERPRETACIÓN DEL TÉRMINO DE CORRECCIÓN DE ERROR ---")
-print("Cada coeficiente alfa indica la velocidad de ajuste hacia el equilibrio de largo plazo.")
-print("Signo negativo: la variable corrige desequilibrios; signo positivo: amplifica los choques.\n")
-
-################################################################################
-# PASO 5: Diagnóstico visual (opcional)
-################################################################################
-# Convertir los residuos a DataFrame con el mismo número de filas que vecm_fitted.resid
-residuals = pd.DataFrame(
-    vecm_fitted.resid,
-    columns=df_vecm.columns,
-    index=df_vecm.index[-vecm_fitted.resid.shape[0]:]  # ← ajusta automáticamente el índice
-)
-
-# Gráfico de residuos por variable
-residuals.plot(subplots=True, figsize=(10, 6), title="Residuos del modelo VECM")
-plt.tight_layout()
-plt.show()
-"""
 
 ################################################################################
 # PASO 2: PRUEBA DE SELECCIÓN DE REZAGOS ÓPTIMOS (para VECM / VAR)
@@ -319,3 +257,4 @@ vecm_model = VECM(
 
 vecm_fitted = vecm_model.fit()
 print(vecm_fitted.summary())
+
