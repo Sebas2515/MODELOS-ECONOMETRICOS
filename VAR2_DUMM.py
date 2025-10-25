@@ -45,24 +45,21 @@ df['dummy_quiebre'] = (df.index >= '2021Q3').astype(int)
 print(df[['dummy_quiebre']].tail(10))
 print(df['dummy_quiebre'].value_counts())
 
-
-################################################################################
 # Crear un nuevo DataFrame limpio (sin valores nulos)
-################################################################################
+
 df_clean = df.dropna().copy()
 
 print("\n--- 2. DataFrame Limpio (sin valores nulos) ---")
 print(df_clean.head())
 print("\nNúmero de observaciones finales:", len(df_clean))
 
-################################################################################
 # Confirmar nombres finales de columnas
-################################################################################
+
 print("\nColumnas finales disponibles:")
 print(df_clean.columns.tolist())
 
 ################################################################################
-# TEST DE ESTACIONARIEDAD (ADF)
+# PASO 1: TEST DE ESTACIONARIEDAD (ADF)
 ################################################################################
 def adf_test(series, name=''):
     """Test de Dickey-Fuller Aumentado."""
@@ -90,7 +87,7 @@ for name, col in df_n_diff.items():
     adf_test(col, name + "_diff")
 
 ################################################################################
-# PASO 4 : SELECCIÓN DEL ORDEN DE REZAGOS (LAGS) ÓPTIMO
+# PASO 2: SELECCIÓN DEL ORDEN DE REZAGOS (LAGS) ÓPTIMO
 ################################################################################
 from statsmodels.tsa.api import VAR
 
@@ -103,7 +100,7 @@ optimal_lags = lag_selection.selected_orders['aic']
 print(f"\n✅ Según el Criterio de Akaike (AIC), el número óptimo de rezagos es: {optimal_lags}")
 
 ###############################################################################
-# PASO 4: ESTIMACIÓN DEL VAR CON DUMMY EXÓGENA
+# PASO 3: ESTIMACIÓN DEL VAR CON DUMMY EXÓGENA
 ################################################################################
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.statespace.varmax import VARMAX
@@ -140,7 +137,7 @@ plt.show()
 .0
 
 ################################################################################
-# PASO 5: PRUEBA DE MULTICOLINEALIDAD (VIF)
+# PASO 4.1: PRUEBA DE MULTICOLINEALIDAD (VIF)
 ################################################################################
 print("\n=== 5. Prueba de Multicolinealidad (VIF) ===")
 
@@ -173,32 +170,57 @@ print("\nTabla resumen del VIF:")
 print(vif_data.round(3))
 
 ################################################################################
-# PASO X: PRUEBA DE CAUSALIDAD DE GRANGER
+# PASO 5: PRUEBA DE CAUSALIDAD DE GRANGER
 ################################################################################
 from statsmodels.tsa.stattools import grangercausalitytests
 
 # --- Selecciona las variables endógenas de tu modelo VAR ---
-endog_vars = df[['N_S&P', 'N_TIR']]  # Ajusta a tus variables endógenas
-max_lag = optimal_lags  # Usa el número de rezagos óptimo de tu VAR
+# Asegúrate de que df y optimal_lags estén definidos antes de este punto
+endog_vars = df[['N_S&P', 'N_TIR','N_TCRM','N_IPC','N_PBI']]
+max_lag = optimal_lags # Usa el número de rezagos óptimo de tu VAR
+significance_level = 0.05 # Nivel de significancia
 
-print("\n=== Prueba de Causalidad de Granger ===")
+# Creamos un DataFrame para almacenar los resultados
+results_df = pd.DataFrame(index=endog_vars.columns, columns=endog_vars.columns)
+
+print("\n=== Procesando Prueba de Causalidad de Granger ===")
 
 for caused in endog_vars.columns:
     for causing in endog_vars.columns:
         if caused != causing:
-            print(f"\n→ Probamos si '{causing}' causa a '{caused}' (en sentido de Granger):")
-            test_result = grangercausalitytests(endog_vars[[caused, causing]], maxlag=max_lag, verbose=False)
+            # grangercausalitytests debe ejecutarse en el orden (y, x), donde x causa a y
+            test_data = endog_vars[[caused, causing]]
+            # verbose=False silencia las advertencias y el output intermedio
+            test_result = grangercausalitytests(test_data, maxlag=max_lag, verbose=False)
 
-            # Extrae el p-valor del test F para el último rezago
+            # Extrae el p-valor del test F para el número de rezagos óptimo
+            # El p-valor está en test_result[lag][0]['ssr_ftest'][1]
             f_test_pvalue = test_result[max_lag][0]['ssr_ftest'][1]
 
-            if f_test_pvalue < 0.05:
-                print(f"   ✅ Se rechaza H0: '{causing}' causa a '{caused}' (p = {f_test_pvalue:.4f})")
-            else:
-                print(f"   ❌ No se rechaza H0: '{causing}' NO causa a '{caused}' (p = {f_test_pvalue:.4f})")
+            # Almacena el resultado en el DataFrame
+            is_significant = f_test_pvalue < significance_level
+            
+            # Formateamos la celda como "p-valor (Resultado)"
+            result_label = '✅ Causa' if is_significant else '❌ No Causa'
+            results_df.loc[causing, caused] = f"{f_test_pvalue:.4f} ({result_label})"
+
+# --- Imprimir la tabla de resultados ---
+print("\n=== Matriz de Causalidad de Granger (H0: La Fila NO causa a la Columna) ===")
+print("  Valor en celda: p-valor (Decisión)")
+print("Columna causa a Fila") 
+print("-" * 85)
+
+# Transponemos el DataFrame para que la variable 'Causante' esté en las filas (más intuitivo)
+# y la variable 'Causada' esté en las columnas.
+# Rellenamos los diagonales con un guion
+results_df = results_df.T.fillna('-')
+print(results_df.to_markdown(numalign="left", stralign="left"))
+print("-" * 85)
+
+#La variable de la FILA (Causante) causa a la variable de la COLUMNA (Causada)
 
 ###############################################################################
-# PASO 7: ESTABILIDAD DEL MODELO VARMAX
+# PASO 6: ESTABILIDAD DEL MODELO VAR CON DUMMY EXOGENA
 ###############################################################################
 print("\n--- 8. Estabilidad del VAR ---")
 
@@ -216,7 +238,7 @@ except Exception as e:
     print("⚠️ Error al calcular las raíces AR:", str(e))
 
 ###############################################################################
-# PASO 8: RESIDUOS DEL MODELO VARMAX
+# PASO 7: RESIDUOS DEL MODELO VAR CON DUMMY EXOGENA 
 ###############################################################################
 print("\n--- 9. Análisis de los residuos ---")
 
@@ -234,7 +256,7 @@ plt.tight_layout()
 plt.show()
 
 ################################################################################
-# PRUEBA 1 - AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
+# PRUEBA 7.1: AUTOCORRELACION SERIAL DE LOS RESIDUOS (LGUN - BOX) 
 ################################################################################
 from statsmodels.stats.stattools import durbin_watson
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
@@ -257,7 +279,7 @@ for col in resid.columns:
         print(f"✅ {col}: p-value = {p_value:.4f} → No hay autocorrelación (residuos independientes).")
 
 ################################################################################
-# PRUEBA 2 - HETEROCEDASTICIDAD (ARCH)
+# PRUEBA 7.2: PRUEBA DE VOLATILIDAD - HETEROCEDASTICIDAD (ARCH TEST)
 ################################################################################
 from statsmodels.stats.diagnostic import het_arch
 
@@ -277,7 +299,7 @@ for col in resid:
         print(f"⚠️ Se detecta heterocedasticidad en {col} (p < 0.05). Posible varianza no constante.")
 
 ################################################################################
-# PRUEBA 3 - NORMALIDAD (Jarque-Bera)
+# PRUEBA 7.3: NORMALIDAD (Jarque-Bera)
 ################################################################################
 from scipy import stats
 
@@ -296,7 +318,7 @@ for col in resid:
 
 
 ################################################################################
-# PASO 6: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (corregido)
+# PASO 8: FUNCIÓN IMPULSO-RESPUESTA (IRF) — GRAFICO MODERNO (corregido)
 ################################################################################
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -344,11 +366,10 @@ plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.show()
 
 ################################################################################
-# PRUEBA DE QUIEBRE ESTRUCTURAL (CHOW) 
+# PASO 9: PRUEBA DE QUIEBRE ESTRUCTURAL (CHOW) 
 ################################################################################
-################################################################################
-# PASO 1: CREAR VARIABLES DIFERENCIADAS
-################################################################################
+
+# PASO 9.1: CREAR VARIABLES DIFERENCIADAS
 
 df_diff = df_clean.diff().dropna()
 df_diff.columns = [col + "_diff" for col in df_diff.columns]
@@ -356,9 +377,7 @@ df_diff.columns = [col + "_diff" for col in df_diff.columns]
 print("\n--- 2️⃣ Columnas diferenciadas disponibles ---")
 print(df_diff.columns.tolist())
 
-################################################################################
-# PASO 2: DEFINIR FUNCIÓN DEL TEST DE CHOW
-################################################################################
+# PASO 9.2: DEFINIR FUNCIÓN DEL TEST DE CHOW
 
 def chow_test(df, split_index, dep_var, indep_vars):
     """Realiza el test de Chow para detectar quiebres estructurales"""
@@ -386,9 +405,8 @@ def chow_test(df, split_index, dep_var, indep_vars):
     p_value = 1 - stats.f.cdf(F, k, n1 + n2 - 2 * k)
     return F, p_value
 
-################################################################################
-# PASO 3: EVALUAR POSIBLES QUIEBRES
-################################################################################
+
+# PASO 9.3: EVALUAR POSIBLES QUIEBRES
 
 # Variable dependiente: PBI en diferencia logarítmica
 dep_var = "N_PBI_diff"
@@ -406,9 +424,9 @@ for i in range(8, len(df_quiebre) - 8):  # evita cortes extremos
 
 results_df = pd.DataFrame(results, columns=['Periodo', 'F_stat', 'p_value'])
 
-################################################################################
-# PASO 4: MOSTRAR RESULTADOS
-################################################################################
+
+# PASO 9.4: MOSTRAR RESULTADOS
+
 
 best_break = results_df.loc[results_df['F_stat'].idxmax()]
 print("\n📊 Test de Chow — Resultados por Periodo")
@@ -422,7 +440,6 @@ else:
     print(f"\n✅ No se rechaza H₀ → El modelo es estable estructuralmente")
 
 
-"""
 ################################################################################
 # PASO FINAL: EXPORTAR RESULTADOS A WORD (.docx)
 ################################################################################
@@ -433,90 +450,153 @@ import io
 
 # Crear documento
 doc = Document()
-doc.add_heading('📊 Resultados del Modelo VAR', level=1)
+doc.add_heading('📊 Resultados del Modelo VAR con Dummy Exógena', level=1)
 
 # --- 1. Información general ---
 doc.add_heading('1️⃣ Información del Modelo', level=2)
 doc.add_paragraph(f"Lags óptimos (según AIC): {optimal_lags}")
 doc.add_paragraph(f"Variables incluidas: {', '.join(model_fitted.names)}")
+doc.add_paragraph("Variable exógena incluida: Dummy de quiebre estructural (2021Q3 en adelante)")
 
 # --- 2. Resumen del modelo VAR ---
 doc.add_heading('2️⃣ Resumen del Modelo VAR', level=2)
 summary_text = str(model_fitted.summary())
 doc.add_paragraph(summary_text)
 
-# --- 3. Pruebas de diagnóstico ---
-doc.add_heading('3️⃣ Pruebas de Diagnóstico', level=2)
+# --- 3. Correlaciones ---
+doc.add_heading('3️⃣ Matriz de Correlación entre Variables', level=2)
+corr_buf = io.StringIO()
+corr_matrix.to_string(corr_buf)
+doc.add_paragraph(corr_buf.getvalue())
 
-## Autocorrelación (Ljung-Box)
-doc.add_paragraph("🔹 Prueba de Autocorrelación (Ljung-Box):")
+# --- 4. Multicolinealidad (VIF) ---
+doc.add_heading('4️⃣ Prueba de Multicolinealidad (VIF)', level=2)
+for i in range(len(vif_data)):
+    var = vif_data.loc[i, 'Variable']
+    vif_val = vif_data.loc[i, 'VIF']
+    if vif_val < 5:
+        interpret = "✅ Bajo riesgo de multicolinealidad"
+    elif vif_val < 10:
+        interpret = "⚠️ Riesgo moderado de multicolinealidad"
+    else:
+        interpret = "❌ Alto riesgo de multicolinealidad"
+    doc.add_paragraph(f"{var}: VIF = {vif_val:.2f} → {interpret}", style='List Bullet')
+
+# --- 5. Causalidad de Granger ---
+doc.add_heading('5️⃣ Prueba de Causalidad de Granger', level=2)
+doc.add_paragraph("Hipótesis nula (H₀): la variable de la fila NO causa a la variable de la columna.")
+granger_buf = io.StringIO()
+results_df.to_string(granger_buf)
+doc.add_paragraph(granger_buf.getvalue())
+
+# --- 6. Estabilidad del Modelo VAR ---
+doc.add_heading('6️⃣ Estabilidad del Modelo VAR', level=2)
+roots = model_fitted.roots
+stable = np.all(np.abs(roots) > 1)
+doc.add_paragraph(f"Raíces del polinomio AR: {', '.join([f'{r:.3f}' for r in roots])}")
+if stable:
+    doc.add_paragraph("✅ El modelo es estable (todas las raíces están fuera del círculo unitario).")
+else:
+    doc.add_paragraph("⚠️ El modelo NO es estable (algunas raíces dentro del círculo unitario).")
+
+# --- 7. Diagnóstico de los residuos ---
+doc.add_heading('7️⃣ Pruebas de Diagnóstico de Residuos', level=2)
+
+# Autocorrelación (Ljung–Box)
+doc.add_paragraph("🔹 Prueba de Autocorrelación (Ljung–Box):")
 for col in resid.columns:
     lb = acorr_ljungbox(resid[col], lags=[optimal_lags], return_df=True)
     p_value = lb['lb_pvalue'].iloc[-1]
     result = f"{col}: p-value = {p_value:.4f} → "
-    if p_value < 0.05:
-        result += "❌ Autocorrelación presente"
-    else:
-        result += "✅ Sin autocorrelación"
+    result += "❌ Autocorrelación presente" if p_value < 0.05 else "✅ Sin autocorrelación"
     doc.add_paragraph(result, style='List Bullet')
 
-## Heterocedasticidad (ARCH)
+# Heterocedasticidad (ARCH)
 doc.add_paragraph("🔹 Prueba de Heterocedasticidad (ARCH):")
 for col in resid.columns:
-    arch_test = het_arch(resid[col])
-    f_pvalue = arch_test[1]
-    lm_pvalue = arch_test[3]
+    f_stat, f_pvalue, lm_stat, lm_pvalue = het_arch(resid[col])
     result = f"{col}: F p-value = {f_pvalue:.4f}, LM p-value = {lm_pvalue:.4f} → "
-    if f_pvalue > 0.05 and lm_pvalue > 0.05:
-        result += "✅ Varianza constante"
-    else:
-        result += "⚠️ Heterocedasticidad detectada"
+    result += "✅ Varianza constante" if f_pvalue > 0.05 and lm_pvalue > 0.05 else "⚠️ Heterocedasticidad detectada"
     doc.add_paragraph(result, style='List Bullet')
 
-## Normalidad (Jarque–Bera)
+# Normalidad (Jarque–Bera)
 doc.add_paragraph("🔹 Prueba de Normalidad (Jarque–Bera):")
 for col in resid.columns:
     jb = stats.jarque_bera(resid[col])
     jb_stat, jb_pvalue = jb.statistic, jb.pvalue
     result = f"{col}: JB = {jb_stat:.3f}, p-value = {jb_pvalue:.4f} → "
-    if jb_pvalue > 0.05:
-        result += "✅ Normalidad no rechazada"
-    else:
-        result += "⚠️ Residuos no normales"
+    result += "✅ Normalidad no rechazada" if jb_pvalue > 0.05 else "⚠️ Residuos no normales"
     doc.add_paragraph(result, style='List Bullet')
 
-# --- 4. Estabilidad ---
-doc.add_heading('4️⃣ Estabilidad del Modelo VAR', level=2)
-stable = model_fitted.is_stable()
-doc.add_paragraph(f"¿El modelo es estable?: {'✅ Sí' if stable else '❌ No'}")
-
-roots = model_fitted.roots
-roots_str = ', '.join([f"{r:.3f}" for r in roots])
-doc.add_paragraph(f"Raíces del polinomio AR: {roots_str}")
-
-if np.all(np.abs(roots) < 1):
-    doc.add_paragraph("✅ Todas las raíces están dentro del círculo unitario → modelo estable.")
-else:
-    doc.add_paragraph("⚠️ Algunas raíces fuera del círculo unitario → modelo inestable.")
-
-# --- 5. Función Impulso-Respuesta (IRF) ---
-doc.add_heading('5️⃣ Funciones Impulso-Respuesta (IRF)', level=2)
-
+# --- 8. Funciones Impulso-Respuesta (solo N_S&P como variable de respuesta) ---
+doc.add_heading('8️⃣ Funciones Impulso-Respuesta (N_S&P)', level=2)
 irf = model_fitted.irf(8)
-fig = irf.plot(orth=False)
-plt.suptitle("Funciones Impulso-Respuesta (VAR)", fontsize=14)
+response = 'N_S&P'
+variables = model_fitted.names
+h = irf.irfs.shape[0]
 
-# Guardar gráfico en memoria e insertarlo en el Word
-img_stream = io.BytesIO()
-plt.savefig(img_stream, format='png', bbox_inches='tight')
-plt.close()
-img_stream.seek(0)
-doc.add_picture(img_stream, width=Inches(6))
-doc.add_paragraph("Nota: Gráfico IRF con horizonte de 8 períodos.")
+for var in variables:
+    if var != response:
+        irf_line = irf.irfs[:, variables.index(var), variables.index(response)]
+        se = irf.stderr()[..., variables.index(var), variables.index(response)]
+        lower, upper = irf_line - 2 * se, irf_line + 2 * se
 
-# --- 6. Guardar documento ---
-output_path = "Resultados_VAR.docx"
+        # Graficar y guardar cada IRF
+        plt.figure(figsize=(6, 4))
+        plt.plot(irf_line, label=f'Choque en {var}', lw=2.2)
+        plt.fill_between(np.arange(h), lower, upper, alpha=0.2)
+        plt.axhline(0, color='black', lw=1, linestyle='--')
+        plt.title(f"Respuesta de N_S&P ante un choque en {var}")
+        plt.xlabel("Horizonte (periodos)")
+        plt.ylabel("Respuesta")
+        plt.legend()
+        plt.tight_layout()
+
+        img_stream = io.BytesIO()
+        plt.savefig(img_stream, format='png', bbox_inches='tight')
+        plt.close()
+        img_stream.seek(0)
+        doc.add_picture(img_stream, width=Inches(6))
+
+# --- 9. Prueba de Quiebre Estructural (Chow) ---
+doc.add_heading('9️⃣ Prueba de Quiebre Estructural (Chow)', level=2)
+best_break_text = f"Periodo con mayor F: {best_break['Periodo']}, F = {best_break['F_stat']:.3f}, p-value = {best_break['p_value']:.4f}"
+doc.add_paragraph(best_break_text)
+if best_break['p_value'] < 0.05:
+    doc.add_paragraph(f"❌ Se rechaza H₀ → Cambio estructural detectado en {best_break['Periodo']}")
+else:
+    doc.add_paragraph("✅ No se rechaza H₀ → No se detecta quiebre estructural significativo.")
+
+# --- 10. Guardar documento ---
+output_path = "Resultados_VAR_Completo.docx"
 doc.save(output_path)
-
 print(f"✅ Archivo Word generado correctamente: {output_path}")
+
+
+#pruebas de ensayo y error 
+
 """
+# --- Selecciona las variables endógenas de tu modelo VAR ---
+endog_vars = df[['N_S&P', 'N_TIR','N_TCRM','N_IPC','N_PBI']]  # Ajusta a tus variables endógenas
+max_lag = optimal_lags  # Usa el número de rezagos óptimo de tu VAR
+
+print("\n=== Prueba de Causalidad de Granger ===")
+
+for caused in endog_vars.columns:
+    for causing in endog_vars.columns:
+        if caused != causing:
+            print(f"\n→ Probamos si '{causing}' causa a '{caused}' (en sentido de Granger):")
+            test_result = grangercausalitytests(endog_vars[[caused, causing]], maxlag=max_lag, verbose=False)
+
+            # Extrae el p-valor del test F para el último rezago
+            f_test_pvalue = test_result[max_lag][0]['ssr_ftest'][1]
+
+            if f_test_pvalue < 0.05:
+                print(f"   ✅ Se rechaza H0: '{causing}' causa a '{caused}' (p = {f_test_pvalue:.4f})")
+            else:
+                print(f"   ❌ No se rechaza H0: '{causing}' NO causa a '{caused}' (p = {f_test_pvalue:.4f})")
+
+"""
+
+#ya me aburriiii xd
+#etiquetar siempre las funciones 
