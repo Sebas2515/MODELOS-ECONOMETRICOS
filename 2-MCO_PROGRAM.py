@@ -47,9 +47,8 @@ print(df.head())
 print("\nInformación del DataFrame:")
 df.info()
 
-
 ################################################################################
-# PASO 1: Convertirlo la serie en logaritmos 
+# PASO 1: Convertir la serie en logaritmos 
 ################################################################################
 
 # Aplicar logaritmo natural (ln) a las variables positivas
@@ -69,10 +68,10 @@ df['dln_EP'] = df['ln_EP'].diff()
 # Crear variable de periodo trimestral
 df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
 
-# ✅ Crear dummy para quiebre estructural (ej. 2020Q3)
-df['dummy_quiebre'] = (df['Fecha'] >= '2020Q3').astype(int)
+# Crear dummy para quiebre estructural (ej. 2020Q3)
+df['dummy_quiebre'] = ((df['Fecha'] >= '2020Q2')& (df['Fecha'] <= '2021Q2')).astype(int)
 
-# ✅ (Opcional) Crear interacciones con las diferencias logarítmicas
+# (Opcional) Crear interacciones con las diferencias logarítmicas
 df['dummy_dln_TIR'] = df['dummy_quiebre'] * df['dln_TIR']
 df['dummy_dln_Ingfisca'] = df['dummy_quiebre'] * df['dln_Ingfisca']
 df['dummy_dln_TE'] = df['dummy_quiebre'] * df['dln_TE']
@@ -84,19 +83,6 @@ df = df.dropna()
 # Verificar
 print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
 print(df['dummy_quiebre'].value_counts())
-
-
-"""
-# Eliminar los primeros NaN generados por la diferencia
-df = df.dropna()
-
-# Creamos un nuevo DataFrame solo con las variables de interés (en logaritmos)
-df_log = df[['ln_PBI_log1', 'ln_Ingfisca_lag1', 'ln_TIR_lag1', 'ln_TE_lag1']].copy()
-print(df_log.head())
-
-print("\n--- 1. Datos transformados a diferencias logarítmicas ---")
-print(df[['dln_PBI', 'dln_Ingfisca', 'dln_TIR', 'dln_TE']].head())
-"""
 
 ################################################################################
 # PASO 2: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
@@ -122,37 +108,43 @@ for name in cols_log:
     adf_test(df[name], name=name)
 
 ###############################################################################
-# PASO 3: AJUSTE DEL MODELO MCO
+# PASO 3: PRUEBA DE CORRELACIÓN ENTRE VARIABLES
 ################################################################################
-"""
-print(df.columns.tolist())
-df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
 
-# Crear dummy para quiebre estructural en 2020Q3
-df['dummy_quiebre'] = (df['Fecha'] >= '2020Q3').astype(int)
+# Seleccionar variables que quieres correlacionar
+cols = ['dln_PBI', 'dln_TIR', 'dln_Ingfisca', 'dln_TE']
 
-print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
-print(df['dummy_quiebre'].value_counts())
-"""
-"""
-print(df['Fecha'].head())
-print(df.dtypes)
-"""
+# Calcular matriz de correlaciones
+corr_matrix = df[cols].corr()
+
+# Mostrar matriz en consola
+print("\n=== Matriz de Correlaciones ===")
+print(corr_matrix.round(3))
+
+# Visualizar matriz con heatmap
+plt.figure(figsize=(8,6))
+sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+plt.title('Heatmap de Correlaciones')
+plt.show()
+0.
+
+###############################################################################
+# PASO 4: MODELO MCO
+################################################################################
+
 # Definir variables explicativas y dependiente
 Y = df['dln_PBI']
 X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP', 
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']]
+        'dummy_quiebre','dummy_dln_TIR','dummy_dln_Ingfisca']]
 X = sm.add_constant(X)
 
-# 4️⃣ Ajustar modelo MCO simple
-
+# Ajustar modelo MCO simple
 model = sm.OLS(Y, X).fit()
 residuos = model.resid
 print("\n=== RESULTADOS DEL MODELO MCO (Δln variables) ===")
 print(model.summary())
 
-
-# 6️⃣ Crear tabla de coeficientes con intervalos de confianza
+# Crear tabla de coeficientes con intervalos de confianza
 coef_table = pd.DataFrame({
     'Coeficiente': model.params,
     'Error Std': model.bse,
@@ -162,7 +154,7 @@ coef_table = pd.DataFrame({
     'IC 0.975': model.conf_int()[1]
 })
 
-# 7️⃣ Crear tabla resumen general del modelo
+# Crear tabla resumen general del modelo
 summary_table = pd.DataFrame({
     'Estadístico': ['R-squared', 'Adj. R-squared', 'F-statistic', 'Prob (F-statistic)',
                     'No. Observations', 'Log-Likelihood', 'AIC', 'BIC', 'Df Residuals', 'Df Model', 'Covariance Type'],
@@ -170,66 +162,106 @@ summary_table = pd.DataFrame({
               int(model.nobs), model.llf, model.aic, model.bic, model.df_resid, model.df_model, 'nonrobust']
 })
 
-# 8️⃣ Mostrar todo con tabulate
+# Mostrar todo con tabulate
 print("\n=== Resumen General del Modelo ===")
 print(tabulate(summary_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
 
 print("\n=== Coeficientes del Modelo ===")
 print(tabulate(coef_table, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"))
 
-
 ###############################################################################
-# PASO 4: PRUEBA DE CORRELACIÓN
+# INTERPRETACIÓN AUTOMÁTICA CON ÍCONOS ✅❌
+################################################################################
+print("\n=== INTERPRETACIÓN DEL MODELO ===")
+
+# R-cuadrado (bondad de ajuste)
+if model.rsquared > 0.7:
+    print(f"✅ El R² = {model.rsquared:.3f} indica que el modelo explica una proporción ALTA de la variabilidad del PBI.")
+elif model.rsquared > 0.5:
+    print(f"⚠️ El R² = {model.rsquared:.3f} indica una explicación MODERADA de la variabilidad del PBI.")
+else:
+    print(f"❌ El R² = {model.rsquared:.3f} sugiere un bajo poder explicativo; el modelo podría mejorarse.")
+
+# Significancia global del modelo
+if model.f_pvalue < 0.05:
+    print(f"✅ La Prob(F) = {model.f_pvalue:.4f} < 0.05 indica que el modelo es GLOBALMENTE SIGNIFICATIVO.")
+else:
+    print(f"❌ La Prob(F) = {model.f_pvalue:.4f} > 0.05 indica que el modelo no es globalmente significativo.")
+
+# Significancia individual de las variables
+print("\n=== Variables estadísticamente significativas (p < 0.05) ===")
+sig_vars = coef_table[coef_table['p-value'] < 0.05].index.tolist()
+if sig_vars:
+    print("✅ " + ", ".join(sig_vars))
+else:
+    print("❌ Ninguna variable es significativa al 5%.")
+
+# Interpretación de la dummy de quiebre
+if 'dummy_quiebre' in model.pvalues:
+    if model.pvalues['dummy_quiebre'] < 0.05:
+        print("\n✅ La variable 'dummy_quiebre' es significativa → evidencia un cambio estructural durante la pandemia.")
+    else:
+        print("\n❌ La variable 'dummy_quiebre' no es significativa → no se detecta un cambio estructural estadísticamente relevante.")
+
+################################################################################
+# PASO 3: PRUEBA DE MULTICOLINEALIDAD VIF
 ################################################################################
 
-# 5️⃣ Seleccionar variables que quieres correlacionar
-cols = ['dln_PBI', 'dln_TIR', 'dln_Ingfisca', 'dln_TE']
+print("\n=== 5. Prueba de Multicolinealidad (VIF) ===")
 
-# 6️⃣ Calcular matriz de correlaciones
-corr_matrix = df[cols].corr()
+# Usar las mismas variables explicativas del modelo MCO (sin la constante)
+X_vif = X.drop(columns=['const'])
 
-# 7️⃣ Mostrar matriz en consola
-print("\n=== Matriz de Correlaciones ===")
-print(corr_matrix.round(3))
+# Calcular VIF para cada variable
+vif_data = pd.DataFrame({
+    'Variable': X_vif.columns,
+    'VIF': [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
+})
 
-# 8️⃣ Visualizar matriz con heatmap
-plt.figure(figsize=(8,6))
-sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
-plt.title('Heatmap de Correlaciones')
-plt.show()
-.0
+# Mostrar tabla resumen
+print("\n===Tabla resumen del VIF===")
+print(tabulate(vif_data.round(3), headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
+
+# Mostrar resultados con interpretación
+for i in range(len(vif_data)):
+    var = vif_data.loc[i, 'Variable']
+    vif_val = vif_data.loc[i, 'VIF']
+
+    if vif_val < 5:
+        interpret = "✅ Bajo riesgo de multicolinealidad"
+    elif vif_val < 10:
+        interpret = "⚠️ Riesgo moderado de multicolinealidad"
+    else:
+        interpret = "❌ Alto riesgo de multicolinealidad"
+
+    print(f"{var:>20}: VIF = {vif_val:.2f} → {interpret}")
+
 
 ################################################################################
-# PASO 5: PRUEBA DE MULTICOLINEALIDAD VIF
+# PASO 4: PRUEBA DE AUTOCORRELACION (DURBIN_WATSON) 
 ################################################################################
-
-#Calcular VIF
-vif_data = pd.DataFrame()
-vif_data['Variable'] = X.columns
-vif_data['VIF'] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
-
-print(vif_data)
-
-
-########################## PRUEBA DE AUTOCORRELACION (DURBIN_WATSON) ##########################
 
 from statsmodels.stats.stattools import durbin_watson
+
+print("\n=== 6. Prueba de Autocorrelación: Durbin-Watson ===")
 
 dw = durbin_watson(model.resid)
 dw_table = pd.DataFrame({
     'Estadístico': ['Durbin-Watson'],
     'Valor': [dw]
 })
-print("\n=== AUTOCORRELACION _DURBIN_WATSON ===")
+
 print(tabulate(dw_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
 
-if dw> 2.0: 
-    print("Posible autocorrelación negativa")
-elif dw < 2.0:
-    print("Posible autocorrelación positiva")
-elif dw == 2.0:
-    print("No hay autocorrelación (ideal)")
+# Interpretación académica
+if 1.5 <= dw <= 2.5:
+    interpretacion = "✅ No se evidencia autocorrelación en los residuos (resultado deseable)."
+elif dw < 1.5:
+    interpretacion = "⚠️ Indicio de autocorrelación positiva en los residuos."
+else:
+    interpretacion = "⚠️ Indicio de autocorrelación negativa en los residuos."
 
+print(f"Interpretación: {interpretacion}")
 
 # Interpretación:
 # DW ≈ 2.0: No hay autocorrelación (ideal).
@@ -237,7 +269,7 @@ elif dw == 2.0:
 # DW > 2.0: Posible autocorrelación negativa.
 
 ################################################################################
-# PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE)
+# PASO 5: PRUEBA DE HETEROCEDASTICIDAD (TEST DE WHITE)
 ################################################################################
 
 from statsmodels.stats.diagnostic import het_white
@@ -253,9 +285,9 @@ print("\n=== Resultado del Test de White (Heterocedasticidad) ===")
 print(tabulate(white_test_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
 
 if white_test[1] > 0.05:
-    print("No se rechaza H0: la varianza de los errores es constante (homocedástica)")
+    print("✅ No se rechaza H0: la varianza de los errores es constante (homocedástica)")
 else:
-    print("Se rechaza H0: la varianza de los errores no es constante (heterocedástica)")
+    print("⚠️ Se rechaza H0: la varianza de los errores no es constante (heterocedástica)")
 
 # H0 (Hipótesis nula): La varianza de los errores es constante (homocedasticidad)
 # H1 (Hipótesis alternativa): La varianza de los errores no es constante (heterocedasticidad)
@@ -265,7 +297,7 @@ else:
 
 
 ################################################################################
-# PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA)
+# PASO 6: PRUEBA DE NORMALIDAD EN LOS RESIDUOS (JARQUE - BERA)
 ################################################################################
 
 from statsmodels.stats.stattools import jarque_bera
@@ -280,22 +312,14 @@ jb_table = pd.DataFrame({
 print("\n=== Jarque - Bera ===")
 print(tabulate(jb_table, headers='keys', tablefmt='fancy_grid', floatfmt=".4f"))
 
-
-print("Jarque-Bera Test")
-print("JB estadístico:", jb_stat)
-print("p-value:", jb_pvalue)
-print("Skew:", skew)
-print("Kurtosis:", kurtosis)
-
-
 if jb_pvalue > 0.05:
-    print("No se rechaza H0: los residuos se distribuyen normalmente")
+    print("✅ No se rechaza H0: los residuos se distribuyen normalmente")
 else:
-    print("Se rechaza H0: los residuos no son normales")
+    print("⚠️ Se rechaza H0: los residuos no son normales")
 
 
 ################################################################################
-# FUNCIÓN PARA EL TEST DE CHOW - ESTABILIDAD ESTRUCTURAL 
+# PASO 8: ESTABILIDAD ESTRUCTURAL (TEST DE CHOW)
 ################################################################################
 from scipy import stats
 
@@ -331,11 +355,9 @@ def chow_test(df, split_index):
     p_value = 1 - stats.f.cdf(F, k, n1 + n2 - 2 * k)
     return F, p_value
 
-################################################################################
-# 4️⃣ EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
-################################################################################
-
+# EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
 # Reiniciamos el índice para que el loop funcione bien (Año pasa a columna normal)
+
 df_reset = df.reset_index(drop=False).rename(columns={'index': 'Trimestre'})
 
 results = []
@@ -345,9 +367,7 @@ for i in range(8, len(df_reset) - 8):  # evita cortes con pocas observaciones
 
 results_df = pd.DataFrame(results, columns=['Trimestre', 'F_stat', 'p_value'])
 
-################################################################################
-# 5️⃣ MOSTRAR RESULTADOS
-################################################################################
+# MOSTRAR RESULTADOS
 
 best_break = results_df.loc[results_df['F_stat'].idxmax()]
 
@@ -362,7 +382,3 @@ else:
     print(f"\n✅ No se rechaza H₀: el modelo es estable estructuralmente")
 
 
-
-# prueba: H0: dln_EP + dummy_dln_EP = 0
-t_test = model.t_test("dln_EP + dummy_dln_EP = 0")
-print(t_test)
