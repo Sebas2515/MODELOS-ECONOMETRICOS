@@ -8,6 +8,9 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 import matplotlib.pyplot as plt    # Creación de gráficos básicos y personalizables.
 from pathlib import Path           # Manejo de rutas y archivos de forma más segura y moderna.
 from tabulate import tabulate      # Muestra tablas en consola con formato legible.
+from statsmodels.tsa.stattools import adfuller
+from scipy import stats
+
 
 ### Ver todas las hojas de excel ###
 """
@@ -25,10 +28,10 @@ print(wb.active.title)    # Muestra el nombre de la hoja activa
 # PASO 0: CONFIGURACIÓN Y CARGA DE DATOS
 ################################################################################
 
-path = Path('DATA/model_program.xlsx')
+path = Path('DATA/BD_SUBNA.xlsx')
 
 # Cargar la hoja específica para la tesis
-df = pd.read_excel(path, sheet_name='bd-tri', index_col=None)
+df = pd.read_excel(path, sheet_name='base_subna', index_col=None)
 
 # Limpiar nombres de columnas (buena práctica)
 df.columns = df.columns.str.strip().str.replace(' ', '_')
@@ -39,7 +42,7 @@ if 'Año' not in df.columns and df.index.name == 'Año':
 
 # Renombrar columnas para trabajar más fácil
 df = df.rename(columns={
-    'Ingresos_Fiscales': 'Ingfisca',
+    'Ingresos_propios_perc': 'Ing_pro_per',
 })
 
 print("--- 1. Datos Cargados y Preparados ---")
@@ -48,94 +51,133 @@ print("\nInformación del DataFrame:")
 df.info()
 
 ################################################################################
-# PASO 1: Convertir la serie en logaritmos 
+# PASO 1: Creación de fecha y Dummy de quiebre 
 ################################################################################
-
-# Aplicar logaritmo natural (ln) a las variables positivas
-df['ln_PBI'] = np.log(df['PBI'])
-df['ln_Ingfisca'] = np.log(df['Ingfisca'])
-df['ln_TIR'] = np.log(df['TIR'])
-df['ln_TE'] = np.log(df['TE'])
-df['ln_EP'] = np.log(df['EP'])
-
-# Crear las diferencias logarítmicas (crecimientos porcentuales aproximados)
-df['dln_PBI'] = df['ln_PBI'].diff()
-df['dln_Ingfisca'] = df['ln_Ingfisca'].diff()
-df['dln_TIR'] = df['ln_TIR'].diff()
-df['dln_TE'] = df['ln_TE'].diff()
-df['dln_EP'] = df['ln_EP'].diff()
 
 # Crear variable de periodo trimestral
 df['Fecha'] = pd.PeriodIndex(df['Año'], freq='Q')
 
 # Crear dummy para quiebre estructural (ej. 2020Q3)
-df['dummy_quiebre'] = ((df['Fecha'] >= '2020Q2')& (df['Fecha'] <= '2021Q2')).astype(int)
-
-# (Opcional) Crear interacciones con las diferencias logarítmicas
-df['dummy_dln_TIR'] = df['dummy_quiebre'] * df['dln_TIR']
-df['dummy_dln_Ingfisca'] = df['dummy_quiebre'] * df['dln_Ingfisca']
-df['dummy_dln_TE'] = df['dummy_quiebre'] * df['dln_TE']
-df['dummy_dln_EP'] = df['dummy_quiebre'] * df['dln_EP']
-
-# Eliminar los primeros NaN generados por la diferencia
-df = df.dropna()
+df['dummy_quiebre'] = ((df['Fecha'] >= pd.Period('2020Q2')) & 
+                       (df['Fecha'] <= pd.Period('2021Q2'))).astype(int)
 
 # Verificar
 print(df[['Año', 'Fecha', 'dummy_quiebre']].tail(10))
 print(df['dummy_quiebre'].value_counts())
 
 ################################################################################
-# PASO 2: TEST DE ESTACIONARIEDAD (DICKEY-FULLER AUMENTADO)
+# PASO 2: TEST DE ESTACIONARIEDAD (ADF)
 ################################################################################
-from statsmodels.tsa.stattools import adfuller
 
 def adf_test(series, name=''):
-    "Realiza el test de Dickey-Fuller Aumentado en una serie temporal."
-    result = adfuller(series.dropna())
-    print(f'\n--- Test de Estacionariedad para: {name} ---')
-    print(f'ADF Statistic: {result[0]:.4f}')
+    """Ejecuta el test Dickey-Fuller Aumentado con limpieza automática."""
+    
+    # Asegurar que la serie sea numérica
+    s = pd.to_numeric(series, errors='coerce').dropna()
+    
+    if len(s) < 5:
+        print(f"\n--- Test ADF: {name} ---")
+        print("⚠️ Serie insuficiente para ADF (menos de 5 datos).")
+        return
+
+    result = adfuller(s)
+
+    print(f'\n--- Test ADF: {name} ---')
+    print(f'Estadístico ADF: {result[0]:.4f}')
     print(f'p-value: {result[1]:.4f}')
+    print('Valores críticos:')
+    for key, value in result[4].items():
+        print(f'   {key}: {value:.4f}')
+
     if result[1] <= 0.05:
-        print("✅ La serie es estacionaria.")
+        print("✅ Serie estacionaria (rechaza raíz unitaria).")
     else:
-        print("❌ La serie no es estacionaria (tiene raíz unitaria).")
+        print("❌ Serie no estacionaria (no rechaza raíz unitaria).")
 
-# Filtrar columnas con 'ln_'
-cols_log = [col for col in df.columns if 'ln_' in col]
+# TOMAR SOLO LAS COLUMNAS NUMÉRICAS DEL DATAFRAME
 
-print("\n--- 2. Verificando Estacionariedad de las series logarítmicas ---")
-for name in cols_log:
-    adf_test(df[name], name=name)
+df_numeric = df.select_dtypes(include=['int', 'float'])
 
-###############################################################################
-# PASO 3: PRUEBA DE CORRELACIÓN ENTRE VARIABLES
+print("\n--- 3. Estacionariedad en series originales (todas las numéricas) ---")
+for col in df_numeric.columns:
+    adf_test(df_numeric[col], col)
+
+# PRIMERAS DIFERENCIAS
+
+df_numeric_diff = df_numeric.diff().dropna()
+
+print("\n--- 4. Estacionariedad en primeras diferencias (numéricas) ---")
+for col in df_numeric_diff.columns:
+    adf_test(df_numeric_diff[col], col + "_diff")
+
+################################################################################
+# PASO 3: PRUEBA DE CORRELACIÓN ENTRE VARIABLES (NIVELES)
 ################################################################################
 
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 # Seleccionar variables que quieres correlacionar
-cols = ['dln_PBI', 'dln_TIR', 'dln_Ingfisca', 'dln_TE']
+cols = ['saldo_perc_pob', 'Ing_pro_per', 'gasto_cap_perc','transf_corr_pc']
 
-# Calcular matriz de correlaciones
-corr_matrix = df[cols].corr()
+# Verificar que todas las columnas existan en el DataFrame
+missing = [c for c in cols if c not in df.columns]
+if missing:
+    print("⚠️ Las siguientes columnas no existen en el DataFrame:", missing)
+else:
+    # Filtrar solo valores numéricos
+    df_corr = df[cols].apply(pd.to_numeric, errors='coerce')
 
-# Mostrar matriz en consola
-print("\n=== Matriz de Correlaciones ===")
-print(corr_matrix.round(3))
+    # Calcular matriz de correlaciones
+    corr_matrix = df_corr.corr()
 
-# Visualizar matriz con heatmap
-plt.figure(figsize=(8,6))
-sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
-plt.title('Heatmap de Correlaciones')
+    # Mostrar matriz en consola
+    print("\n=== Matriz de Correlaciones (Niveles) ===")
+    print(corr_matrix.round(3))
+
+    # Visualizar matriz con heatmap
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+    plt.title('Heatmap de Correlaciones - Niveles')
+    plt.tight_layout()
+    plt.show()
+
+# Crear DataFrame solo con las columnas seleccionadas
+df_vars = df[cols].apply(pd.to_numeric, errors='coerce')
+
+# Crear primeras diferencias
+df_diff_vars = df_vars.diff().dropna()
+
+# Renombrar columnas: saldo_perc_pob -> d_saldo_perc_pob
+df_diff_vars = df_diff_vars.rename(columns=lambda x: f"d_{x}")
+
+################################################################################
+# PASO 3B: GENERAR DIFERENCIAS Y CORRELACIONARLAS
+################################################################################
+
+# Matriz de correlaciones para diferencias
+corr_matrix_diff = df_diff_vars.corr()
+
+print("\n=== Matriz de Correlaciones (Primeras Diferencias) ===")
+print(corr_matrix_diff.round(3))
+
+# Heatmap para diferencias
+plt.figure(figsize=(8, 6))
+sns.heatmap(corr_matrix_diff, annot=True, cmap='coolwarm', fmt=".2f")
+plt.title('Heatmap de Correlaciones - Primeras Diferencias')
+plt.tight_layout()
 plt.show()
-0.
 
 ###############################################################################
 # PASO 4: MODELO MCO
 ################################################################################
 
+# Agregar dummy a las diferencias (nota: dummy no se diferencia)
+df_diff_vars['dummy_quiebre'] = df['dummy_quiebre'].iloc[1:].values
+
 # Definir variables explicativas y dependiente
-Y = df['dln_PBI']
-X = df[['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP', 
-        'dummy_quiebre','dummy_dln_TIR','dummy_dln_Ingfisca']]
+Y = df_diff_vars['d_saldo_perc_pob']
+X = df_diff_vars[['d_Ing_pro_per', 'd_gasto_cap_perc','dummy_quiebre','d_transf_corr_pc']]
 X = sm.add_constant(X)
 
 # Ajustar modelo MCO simple
@@ -143,6 +185,15 @@ model = sm.OLS(Y, X).fit()
 residuos = model.resid
 print("\n=== RESULTADOS DEL MODELO MCO (Δln variables) ===")
 print(model.summary())
+
+# Ajustar modelo MCO con errores robustos HAC (Newey-West)
+model_hac = sm.OLS(Y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 2})
+
+print("\n=== RESULTADOS DEL MODELO MCO CON HAC (NEWEY–WEST) ===")
+print(model_hac.summary())
+# maxlags = número de rezagos permitidos en la estructura de autocorrelación
+model_hac = sm.OLS(Y, X).fit(cov_type='HAC', cov_kwds={'maxlags': 2})
+
 
 # Crear tabla de coeficientes con intervalos de confianza
 coef_table = pd.DataFrame({
@@ -302,7 +353,7 @@ else:
 
 from statsmodels.stats.stattools import jarque_bera
 
-jb_stat, jb_pvalue, skew, kurtosis = jarque_bera(residuos)
+jb_stat, jb_pvalue, skew, kurtosis = jarque_bera(model.resid)
 
 jb_table = pd.DataFrame({
     'Estadístico': ['JB estadístico', 'p-value', 'Skew', 'Kurtosis'],
@@ -321,65 +372,55 @@ else:
 ################################################################################
 # PASO 8: ESTABILIDAD ESTRUCTURAL (TEST DE CHOW)
 ################################################################################
-from scipy import stats
 
-def chow_test(df, split_index):
-    """Realiza el test de Chow en el punto de quiebre indicado (por posición)"""
-    
-    # Dividir usando posición, no etiquetas (iloc)
-    Y1 = df.iloc[:split_index]['dln_PBI']
-    X1 = sm.add_constant(df.iloc[:split_index][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
-    
-    Y2 = df.iloc[split_index:]['dln_PBI']
-    X2 = sm.add_constant(df.iloc[split_index:][['dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
-    
-    # Modelo completo
-    Y_full = df['dln_PBI']
-    X_full = sm.add_constant(df[[ 'dln_TIR', 'dln_Ingfisca', 'dln_TE', 'dln_EP',
-        'dummy_quiebre', 'dummy_dln_TIR', 'dummy_dln_Ingfisca', 'dummy_dln_TE', 'dummy_dln_EP']])
-    
-    model_full = sm.OLS(Y_full, X_full).fit()
-    model1 = sm.OLS(Y1, X1).fit()
-    model2 = sm.OLS(Y2, X2).fit()
-    
-    # Estadístico F de Chow
-    n1, n2 = len(Y1), len(Y2)
-    k = X_full.shape[1]
-    SSR_full = sum(model_full.resid ** 2)
-    SSR1 = sum(model1.resid ** 2)
-    SSR2 = sum(model2.resid ** 2)
-    
-    F = ((SSR_full - (SSR1 + SSR2)) / k) / ((SSR1 + SSR2) / (n1 + n2 - 2 * k))
-    p_value = 1 - stats.f.cdf(F, k, n1 + n2 - 2 * k)
-    return F, p_value
+print("\n=== 8. Test de Chow: Estabilidad Estructural ===")
 
-# EVALUAR TODOS LOS POSIBLES PUNTOS DE QUIEBRE
-# Reiniciamos el índice para que el loop funcione bien (Año pasa a columna normal)
+# 1. Determinar el punto de quiebre (2020Q2)
+break_period = pd.Period('2020Q2', freq='Q')
 
-df_reset = df.reset_index(drop=False).rename(columns={'index': 'Trimestre'})
+# df_diff_vars empieza en t=2, por eso usamos df['Fecha'].iloc[1:]
+break_index = df_diff_vars.index[df['Fecha'].iloc[1:] == break_period][0]
 
-results = []
-for i in range(8, len(df_reset) - 8):  # evita cortes con pocas observaciones
-    F, p = chow_test(df_reset, i)
-    results.append((df_reset.loc[i, 'Año'], F, p))
+print(f"\n📌 Punto de quiebre evaluado: {break_period} (índice {break_index})")
 
-results_df = pd.DataFrame(results, columns=['Trimestre', 'F_stat', 'p_value'])
+# 2. Dividir la muestra
+Y1 = Y.loc[:break_index]
+X1 = X.loc[:break_index]
 
-# MOSTRAR RESULTADOS
+Y2 = Y.loc[break_index+1:]
+X2 = X.loc[break_index+1:]
 
-best_break = results_df.loc[results_df['F_stat'].idxmax()]
+# 3. Estimar submodelos
+model1 = sm.OLS(Y1, X1).fit()
+model2 = sm.OLS(Y2, X2).fit()
 
-print("📊 Test de Chow — Resultados por Trimestre")
-print(results_df.to_string(index=False))
-print("\n🏆 Posible punto de cambio estructural:")
-print(best_break)
+# 4. SSR
+SSR1 = sum(model1.resid**2)
+SSR2 = sum(model2.resid**2)
+SSR_full = sum(model.resid**2)
 
-if best_break['p_value'] < 0.05:
-    print(f"\n❌ Se rechaza H₀: cambio estructural detectado en el trimestre {best_break['Trimestre']}")
+# 5. Parámetros
+k = X.shape[1]  # número de parámetros estimados (incluye constante)
+n1, n2 = len(Y1), len(Y2)
+
+# 6. Estimador F de Chow
+F_chow = ((SSR_full - (SSR1 + SSR2)) / k) / ((SSR1 + SSR2) / (n1 + n2 - 2*k))
+p_value_chow = 1 - stats.f.cdf(F_chow, k, (n1 + n2 - 2*k))
+
+# 7. Tabla de resultados
+chow_table = pd.DataFrame({
+    'Estadístico': ['F-statistic', 'p-value', 'SSR_full', 'SSR1', 'SSR2', 'k', 'n1', 'n2'],
+    'Valor': [F_chow, p_value_chow, SSR_full, SSR1, SSR2, k, n1, n2]
+})
+
+print("\n=== Resultados del Test de Chow ===")
+print(tabulate(chow_table, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"))
+
+# 8. Conclusión
+if p_value_chow < 0.05:
+    print(f"\n❌ Se rechaza H₀: existe evidencia de cambio estructural en {break_period}.")
 else:
-    print(f"\n✅ No se rechaza H₀: el modelo es estable estructuralmente")
+    print(f"\n✅ No se rechaza H₀: el modelo es estable, no se detecta cambio estructural en {break_period}.")
 
 
 ################################################################################
@@ -424,197 +465,64 @@ print("\n💡 Recomendación: Si los signos y significancia de los coeficientes 
 print("puedes concluir que los resultados del modelo son robustos frente a heterocedasticidad o autocorrelación leve.")
 
 
-################################################################################
-# PASO 11: GRÁFICOS COMPLEMENTARIOS PARA EL ANÁLISIS
-################################################################################
-
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-sns.set(style="whitegrid")
-
-###############################################
-# 1. SERIES EN LOGARITMOS
-###############################################
-plt.figure(figsize=(12,6))
-plt.plot(df["Fecha"].astype(str), df["ln_PBI"], label="ln_PBI")
-plt.plot(df["Fecha"].astype(str), df["ln_Ingfisca"], label="ln_Ingfisca")
-plt.plot(df["Fecha"].astype(str), df["ln_TIR"], label="ln_TIR")
-plt.plot(df["Fecha"].astype(str), df["ln_TE"], label="ln_TE")
-plt.plot(df["Fecha"].astype(str), df["ln_EP"], label="ln_EP")
-plt.title("Series en logaritmos")
-plt.xticks(rotation=45)
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 2. DIFERENCIAS LOGARÍTMICAS
-###############################################
-plt.figure(figsize=(12,6))
-plt.plot(df["Fecha"].astype(str), df["dln_PBI"], label="dln_PBI")
-plt.plot(df["Fecha"].astype(str), df["dln_TIR"], label="dln_TIR")
-plt.plot(df["Fecha"].astype(str), df["dln_Ingfisca"], label="dln_Ingfisca")
-plt.plot(df["Fecha"].astype(str), df["dln_TE"], label="dln_TE")
-plt.plot(df["Fecha"].astype(str), df["dln_EP"], label="dln_EP")
-plt.title("Diferencias logarítmicas (todas las variables)")
-plt.xticks(rotation=45)
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 3. HEATMAP DE CORRELACIONES (ya lo tienes, pero mejorado)
-###############################################
-plt.figure(figsize=(8,6))
-sns.heatmap(df[["dln_PBI","dln_TIR","dln_Ingfisca","dln_TE","dln_EP"]].corr(),
-            annot=True, cmap="coolwarm", fmt=".2f")
-plt.title("Matriz de correlaciones (diferencias logarítmicas)")
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 4. RESIDUAL PLOT
-###############################################
-plt.figure(figsize=(10,5))
-plt.plot(df["Fecha"].astype(str), model.resid, marker="o")
-plt.axhline(0, color="black", linestyle="--")
-plt.title("Residuos del Modelo MCO")
-plt.xticks(rotation=45)
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 5. HISTOGRAMA + QQ-PLOT
-###############################################
-from statsmodels.graphics.gofplots import qqplot
-
-plt.figure(figsize=(12,5))
-
-plt.subplot(1,2,1)
-plt.hist(model.resid, bins=10, edgecolor="black")
-plt.title("Histograma de residuos")
-
-plt.subplot(1,2,2)
-qqplot(model.resid, line='s', ax=plt.gca())
-plt.title("QQ-Plot de residuos")
-
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 6. REAL vs PREDICHO
-###############################################
-df["predicho"] = model.fittedvalues
-
-plt.figure(figsize=(12,6))
-plt.plot(df["Fecha"].astype(str), df["dln_PBI"], label="Real (dln_PBI)")
-plt.plot(df["Fecha"].astype(str), df["predicho"], label="Predicho (MCO)")
-plt.xticks(rotation=45)
-plt.title("Real vs Predicho — Modelo MCO")
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 7. GRÁFICO DEL QUIEBRE ESTRUCTURAL
-###############################################
-plt.figure(figsize=(12,6))
-plt.plot(df["Fecha"].astype(str), df["dln_PBI"], label="dln_PBI")
-plt.scatter(df[df["dummy_quiebre"]==1]["Fecha"].astype(str),
-            df[df["dummy_quiebre"]==1]["dln_PBI"],
-            color="red", label="Periodo de quiebre", s=60)
-plt.xticks(rotation=45)
-plt.title("Identificación visual del quiebre estructural (dummy_quiebre)")
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-###############################################
-# 8. GRÁFICO DEL TEST DE CHOW
-###############################################
-plt.figure(figsize=(12,6))
-plt.plot(results_df["Trimestre"], results_df["F_stat"], marker="o")
-plt.axhline(1.8, color="red", linestyle="--", label="F crítico aprox (α=0.05)")
-plt.xticks(rotation=45)
-plt.title("Evolución del estadístico F del Test de Chow")
-plt.ylabel("F-stat")
-plt.legend()
-plt.tight_layout()
-plt.show()
 
 
-"""
-################################################################################
-# PASO FINAL: EXPORTAR RESULTADOS A WORD
-################################################################################
-from docx import Document
-from docx.shared import Inches, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# Crear documento
-doc = Document()
-doc.add_heading('RESULTADOS DEL MODELO ECONOMÉTRICO', level=1)
 
-# --- FUNCIONES AUXILIARES ---
-def add_dataframe(doc, df, title):
-    Agrega una tabla de pandas al documento con título.
-    doc.add_heading(title, level=2)
-    table = doc.add_table(rows=1, cols=len(df.columns))
-    hdr_cells = table.rows[0].cells
-    for i, col_name in enumerate(df.columns):
-        hdr_cells[i].text = str(col_name)
-    for _, row in df.iterrows():
-        row_cells = table.add_row().cells
-        for i, value in enumerate(row):
-            row_cells[i].text = str(round(value, 6)) if isinstance(value, (int, float)) else str(value)
-    doc.add_paragraph()  # Espacio
 
-def add_text(doc, text, bold=False):
-    Agrega texto al documento.
-    p = doc.add_paragraph()
-    run = p.add_run(text)
-    if bold:
-        run.bold = True
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-# --- SECCIÓN 1: DATOS Y MODELO ---
-add_text(doc, "Resumen de variables utilizadas y modelo estimado:", bold=True)
-add_dataframe(doc, summary_table, "Resumen General del Modelo")
-add_dataframe(doc, coef_table, "Coeficientes del Modelo (OLS)")
 
-# --- SECCIÓN 2: DIAGNÓSTICOS ---
-add_text(doc, "Resultados de pruebas econométricas:", bold=True)
-add_dataframe(doc, vif_data, "Prueba de Multicolinealidad (VIF)")
-add_dataframe(doc, dw_table, "Prueba de Autocorrelación (Durbin-Watson)")
-add_dataframe(doc, white_test_table, "Prueba de Heterocedasticidad (White)")
-add_dataframe(doc, jb_table, "Prueba de Normalidad (Jarque-Bera)")
-add_dataframe(doc, hac_table, "Errores estándar robustos (HAC - Newey West)")
 
-# --- SECCIÓN 3: TEST DE CHOW ---
-add_dataframe(doc, results_df, "Resultados del Test de Chow (Estabilidad Estructural)")
-add_text(doc, f"Trimestre con mayor evidencia de cambio estructural: {best_break['Trimestre']}", bold=True)
 
-# --- SECCIÓN 4: TEST RAMSEY ---
-add_text(doc, "Test de Especificación Funcional (Ramsey RESET):", bold=True)
-add_text(doc, f"Estadístico F: {reset_test.fvalue:.4f} — p-value: {reset_test.pvalue:.4f}")
 
-# --- SECCIÓN 5: INTERPRETACIÓN GLOBAL ---
-add_heading = doc.add_heading("Interpretación General del Modelo", level=2)
-add_text(doc, f"R-cuadrado: {model.rsquared:.3f}")
-add_text(doc, f"Prob (F): {model.f_pvalue:.4f}")
-add_text(doc, "Variables significativas (p < 0.05): " + ", ".join(sig_vars) if sig_vars else "Ninguna variable significativa.")
 
-add_text(doc, f"Durbin-Watson: {dw:.3f} → {interpretacion}")
-if white_test[1] > 0.05:
-    add_text(doc, "No se detecta heterocedasticidad significativa.")
-else:
-    add_text(doc, "Se detecta heterocedasticidad significativa.")
 
-# --- GUARDAR DOCUMENTO ---
-output_path = "Resultados_Modelo_Econometrico.docx"
-doc.save(output_path)
 
-print(f"\n📄 Resultados exportados exitosamente a: {output_path}")
 
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
