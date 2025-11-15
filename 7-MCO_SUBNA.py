@@ -10,6 +10,11 @@ from pathlib import Path           # Manejo de rutas y archivos de forma más se
 from tabulate import tabulate      # Muestra tablas en consola con formato legible.
 from statsmodels.tsa.stattools import adfuller
 from scipy import stats
+from scipy.stats import norm
+from statsmodels.graphics.gofplots import qqplot
+from scipy.stats import norm
+from statsmodels.graphics.gofplots import qqplot
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
 
 ### Ver todas las hojas de excel ###
@@ -464,52 +469,142 @@ print("✅ Se aplicaron errores estándar robustos (Newey-West) para verificar e
 print("\n💡 Recomendación: Si los signos y significancia de los coeficientes se mantienen similares,")
 print("puedes concluir que los resultados del modelo son robustos frente a heterocedasticidad o autocorrelación leve.")
 
+################################################################################
+# PASO 11: GRÁFICOS COMPLEMENTARIOS DEL MODELO MCO
+################################################################################
 
+################################################################################
+# PASO 11: GRÁFICOS COMPLEMENTARIOS DEL MODELO MCO
+################################################################################
 
+# Preparar eje temporal para gráficos (usar timestamp para matplotlib)
+# si Fecha es PeriodIndex, convertir a timestamp para graficar
+if isinstance(df['Fecha'].iloc[0], pd.Period):
+    df['Fecha_plot'] = df['Fecha'].dt.to_timestamp()
+    # df_diff_vars está alineado con df.iloc[1:]
+    df_diff_vars['Fecha_plot'] = df['Fecha_plot'].iloc[1:].values
+else:
+    df['Fecha_plot'] = pd.to_datetime(df['Fecha'])
+    df_diff_vars['Fecha_plot'] = df['Fecha_plot'].iloc[1:].values
 
+# GRAFICO GENERAL DE SERIES (DIFERENCIAS)
+plt.figure(figsize=(12,6))
+plt.plot(df_diff_vars['Fecha_plot'], df_diff_vars['d_Ing_pro_per'], label="Δ Ing_pro_per", linewidth=2)
+plt.plot(df_diff_vars['Fecha_plot'], df_diff_vars['d_gasto_cap_perc'], label="Δ gasto_cap_perc", linewidth=2)
+plt.plot(df_diff_vars['Fecha_plot'], df_diff_vars['d_transf_corr_pc'], label="Δ transf_corr_pc", linewidth=2)
+# Dummy como puntos escalados para visualización
+scale = df_diff_vars[['d_Ing_pro_per', 'd_gasto_cap_perc', 'd_transf_corr_pc']].abs().max().max()
+plt.scatter(df_diff_vars['Fecha_plot'], df_diff_vars['dummy_quiebre'] * scale,
+            label="Dummy quiebre (escalada)", color="red", zorder=5)
+plt.title("Evolución de las series en diferencias")
+plt.xlabel("Fecha")
+plt.ylabel("Delta (primeras diferencias)")
+plt.xticks(rotation=45)
+plt.legend()
+plt.tight_layout()
+plt.show()
 
+# Gráficos adicionales útiles
+# Residuos vs Ajustados
+plt.figure(figsize=(8,5))
+plt.scatter(model.fittedvalues, residuos)
+plt.axhline(0, linestyle='--', color='k')
+plt.xlabel("Valores ajustados")
+plt.ylabel("Residuos")
+plt.title("Residuos vs Valores ajustados")
+plt.tight_layout()
+plt.show()
 
+# Histograma residuos + curva normal
+plt.figure(figsize=(8,5))
+plt.hist(residuos, bins=15, density=True, alpha=0.6)
+xs = np.linspace(residuos.min(), residuos.max(), 200)
+plt.plot(xs, norm.pdf(xs, residuos.mean(), residuos.std()))
+plt.title("Histograma de residuos con curva normal")
+plt.tight_layout()
+plt.show()
 
+# QQ-plot
+qqplot(residuos, line='45')
+plt.title("QQ-Plot de residuos")
+plt.tight_layout()
+plt.show()
 
+# ACF residuos
+plot_acf(residuos)
+plt.title("ACF de residuos")
+plt.tight_layout()
+plt.show()
 
+# Coeficientes estandarizados (betas)
+betas_std = model.params.copy()
+# estandarizar: beta * sd(X)/sd(Y) para variables no constantes
+sd_X = X.drop(columns=['const']).std()
+for name in sd_X.index:
+    betas_std[name] = model.params[name] * (sd_X[name] / Y.std())
+# dejar const como NaN para mostrar solo explicativas
+betas_plot = betas_std.drop('const', errors='ignore')
+plt.figure(figsize=(8,5))
+betas_plot.plot(kind='bar')
+plt.title("Coeficientes estandarizados (aprox.)")
+plt.tight_layout()
+plt.show()
 
+################################################################################
+# PASO 12: TABLA DE ELASTICIDADES E INTERPRETACIÓN
+################################################################################
 
+elasticidades = pd.DataFrame({
+    'Variable': model.params.index,
+    'Coeficiente (β)': model.params.values,
+})
 
+# Agregar medias (X sin const)
+media_Y = Y.mean()
+medias_X = X.drop(columns=['const']).mean()
+# vectorizar medias (poner NaN para const)
+elasticidades['Media X'] = [medias_X.get(v, np.nan) if v != 'const' else np.nan for v in elasticidades['Variable']]
+elasticidades['Media Y'] = media_Y
 
+elasticidades['Elasticidad'] = elasticidades.apply(
+    lambda r: (r['Coeficiente (β)'] * r['Media X'] / r['Media Y']) if pd.notna(r['Media X']) else np.nan,
+    axis=1
+)
 
+print("\n=== TABLA DE ELASTICIDADES ===")
+print(tabulate(elasticidades, headers='keys', tablefmt='fancy_grid', floatfmt=".6f"))
 
+print("\n=== INTERPRETACIÓN DE LAS ELASTICIDADES ===")
+for _, row in elasticidades.iterrows():
+    var = row['Variable']
+    elast = row['Elasticidad']
+    if pd.isna(elast):
+        continue
+    print(f"- Un cambio relativo del 1% en {var.replace('d_','')} se asocia con un cambio aproximado de {elast:.3f}% en la variable dependiente.")
 
+################################################################################
+# FIN DEL SCRIPT CORREGIDO
+################################################################################
 
+##########################################################
+# GRAFICO: VALOR REAL VS VALOR PREDICHO
+##########################################################
 
+plt.figure(figsize=(10,6))
 
+# Valores reales
+plt.plot(df["Fecha"], df["d_Ing_pro_per"], label="Real", linewidth=2)
 
+# Valores predichos del MCO
+plt.plot(df["Fecha"], results.fittedvalues, label="Predicho (MCO)", linewidth=2, linestyle="--")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+plt.title("Comparación entre valores reales y predichos", fontsize=14)
+plt.xlabel("Fecha")
+plt.ylabel("Valor")
+plt.xticks(rotation=45)
+plt.legend()
+plt.tight_layout()
+plt.show()
 
 
 

@@ -543,6 +543,61 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
+################################################################################
+# PASO 12: TABLA DE ELASTICIDADES E INTERPRETACIÓN ECONÓMICA
+################################################################################
+
+import pandas as pd
+
+# Extraer coeficientes del modelo
+params = model.params
+
+# Filtrar solo variables en diferencias logarítmicas (elasticidades)
+elasticidades = params.filter(like='dln_')
+
+# Construir DataFrame
+tabla_elasticidades = pd.DataFrame({
+    "Variable": elasticidades.index,
+    "Elasticidad": elasticidades.values
+})
+
+# Interpretación automática
+tabla_elasticidades["Interpretación"] = tabla_elasticidades.apply(
+    lambda row: f"Un aumento de 1% en {row['Variable'].replace('dln_', '')} "
+                f"modifica el PBI en {row['Elasticidad']:.3f}%.",
+    axis=1
+)
+
+# ==========================================================
+# TABLA BONITA (ASCII-style)
+# ==========================================================
+
+# Determinar el ancho de columnas
+col1_width = max(tabla_elasticidades["Variable"].str.len().max(), len("Variable")) + 2
+col2_width = max(len("Elasticidad"), 12) + 2
+col3_width = max(tabla_elasticidades["Interpretación"].str.len().max(), len("Interpretación")) + 2
+
+# Encabezado
+print("\n" + "═" * (col1_width + col2_width + col3_width + 4))
+header = f"│ {'Variable'.ljust(col1_width)}│ {'Elasticidad'.ljust(col2_width)}│ {'Interpretación'.ljust(col3_width)}│"
+print(header)
+print("╟" + "─" * (col1_width) + "┼" + "─" * (col2_width) + "┼" + "─" * (col3_width) + "╢")
+
+# Filas
+for _, row in tabla_elasticidades.iterrows():
+    line = (
+        f"│ {row['Variable'].ljust(col1_width)}"
+        f"│ {format(row['Elasticidad'], '.4f').ljust(col2_width)}"
+        f"│ {row['Interpretación'].ljust(col3_width)}│"
+    )
+    print(line)
+
+# Pie de tabla
+print("╚" + "═" * (col1_width) + "╧" + "═" * (col2_width) + "╧" + "═" * (col3_width) + "╝\n")
+
+# Mostrar DataFrame normal si necesitas exportarlo luego
+# print(tabla_elasticidades)
+
 
 """
 ################################################################################
