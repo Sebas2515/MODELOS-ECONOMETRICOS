@@ -330,3 +330,160 @@ residuals.plot(subplots=True, figsize=(10, 6), title="Residuos del modelo VECM")
 plt.tight_layout()
 plt.show()
 """
+
+
+
+##################################################################3
+from statsmodels.stats.diagnostic import breaks_cusumolsresid
+from statsmodels.tools.sm_exceptions import MissingDataError
+
+
+# --- Asumiendo que df_n_diff, optimal_lags, model_fitted están cargados ---
+# (Variables endógenas, rezagos, y el objeto VARResults)
+
+# Datos que me proporcionaste:
+ddof = 22 # Número de parámetros en cada ecuación
+T = 35    # Número de observaciones
+
+# --------------------------------------------------------------------------
+# PASO 1: Extracción de Residuos
+# --------------------------------------------------------------------------
+# La clave es que la longitud de los residuos debe ser igual a T.
+# resid = pd.DataFrame(model_fitted.resid, columns=model_fitted.names) 
+# Usamos un DataFrame de ejemplo para hacer el código ejecutable sin tu modelo completo:
+# --- REEMPLAZA ESTO CON TUS DATOS REALES DE RESIDUOS ---
+# Si tus residuos originales solo tienen 35 puntos, T=35 es correcto.
+# Si estás ejecutando esto en el entorno de tu script anterior, resid ya está definido.
+# k_vars = len(model_fitted.names)
+# endog_names = model_fitted.names
+
+# --- SIMULACIÓN DE RESIDUOS Y NOMBRES PARA REPRODUCIR LA LÓGICA ---
+k_vars = 5
+endog_names = ['N_IPC', 'N_TCRM', 'N_PBI', 'N_TIR', 'N_S&P']
+# Generamos residuos aleatorios para que el código sea ejecutable:
+resid_data = np.random.randn(T, k_vars) * 0.1 
+resid = pd.DataFrame(resid_data, columns=endog_names)
+resid.index = pd.PeriodIndex(pd.to_datetime(pd.date_range('2015Q1', periods=T, freq='Q')), freq='Q')
+# -----------------------------------------------------------------
+
+alpha = 0.05
+
+print(f"Número de parámetros (ddof) en cada ecuación: {ddof}")
+print(f"Número de observaciones (T): {T}")
+print("\n--- TEST CUSUM (Estabilidad de Parámetros) RE-CORREGIDO ---")
+
+
+# --------------------------------------------------------------------------
+# Función para calcular el Valor Crítico de la prueba CUSUM (K-S)
+# --------------------------------------------------------------------------
+def get_cusum_crit_value_formal(T, ddof, alpha=0.05):
+    """
+    Calcula el valor crítico constante (límites K-S) para la comparación formal (Sup-B).
+    Usa la aproximación de Brown, Durbin, Evans.
+    """
+    if T <= ddof:
+        return np.inf # No se puede realizar el test
+    
+    # El valor formal (a) para K-S a 5% es 0.948.
+    # El valor Sup-B se compara con este 'a'.
+    a_alpha = 0.948
+    return a_alpha
+
+# --------------------------------------------------------------------------
+# PASO 2: Aplicar y Graficar el Test CUSUM para cada Ecuación
+# --------------------------------------------------------------------------
+
+plt.style.use('seaborn-v0_8-whitegrid')
+fig, axes = plt.subplots(k_vars, 1, figsize=(10, 4 * k_vars), sharex=True)
+
+if k_vars == 1:
+    axes = [axes] 
+
+cusum_results = []
+crit_val_formal = get_cusum_crit_value_formal(T, ddof, alpha=alpha)
+
+
+for i, col in enumerate(resid.columns):
+    try:
+        # APLICACIÓN CORRECTA: breaks_cusumolsresid solo devuelve 2 valores
+        sup_b, cum_sum = breaks_cusumolsresid(resid[col], ddof=ddof)
+        
+        # --- Cálculo de Bandas Críticas para el Ploteo ---
+        # La banda para el gráfico es una aproximación lineal: L = +/- a * sqrt((t-k)/(T-k)) * sqrt(T/T)
+        # Usamos la aproximación más común (recta que une los límites K-S)
+        
+        # La prueba empieza en el punto 'ddof' (22 en este caso)
+        T_eff = T - ddof
+        t_index = np.arange(1, T_eff + 1)
+        
+        # Los límites del gráfico son una línea recta. 
+        # C = a_alpha * sqrt(T-k)
+        C_plot = 0.948 * np.sqrt(T_eff)
+        
+        # Pendiente (slope) de la línea de límites
+        slope = C_plot / T_eff
+        
+        # Línea de límite: L(t) = C * (t / T_eff)
+        # Se plotea sobre el índice de tiempo real a partir de 'ddof'
+        upper_limit = slope * t_index
+        lower_limit = -slope * t_index
+        
+        
+        # --- Ploteo Manual ---
+        
+        # Convertir índice PeriodIndex a DatetimeIndex para el ploteo
+        time_index = resid.index.to_timestamp()
+        
+        axes[i].plot(time_index, cum_sum, label='Suma Acumulada (CUSUM)', color='blue', lw=2)
+        axes[i].axhline(0, color='black', lw=1, linestyle='--')
+        
+        # Graficar bandas críticas (solo a partir de 'ddof')
+        axes[i].plot(time_index[ddof:], upper_limit, 
+                     label=f'Límite {int((1-alpha)*100)}%', color='red', linestyle='--', lw=1.5)
+        axes[i].plot(time_index[ddof:], lower_limit, 
+                     color='red', linestyle='--', lw=1.5)
+                     
+        axes[i].set_title(f'Test CUSUM para la Ecuación: {col}')
+        axes[i].legend(loc='upper left')
+
+        # --- Interpretación Automatizada ---
+        
+        # La prueba formal CUSUM compara el estadístico Sup-B con el valor crítico 'a_alpha'
+        # El estadístico Sup-B es el máximo valor absoluto de la suma acumulada ESCALADA.
+        
+        if sup_b > crit_val_formal:
+            interpretacion = "❌ **RECHAZA H₀** (Inestabilidad): Parámetros no estables."
+            resultado_formal = "Inestable"
+        else:
+            interpretacion = "✅ **NO RECHAZA H₀** (Estabilidad): Parámetros estables."
+            resultado_formal = "Estable"
+
+        # Imprimir el resultado interpretativo automáticamente
+        print(f"\nEcuación {col}:")
+        print(f"  Estadístico Sup-B: {sup_b:.4f} | Valor Crítico (K-S, 5%): {crit_val_formal:.4f}")
+        print(f"  Resultado: {interpretacion}")
+        
+        cusum_results.append({
+            'Ecuacion': col,
+            'Sup_B': f'{sup_b:.4f}',
+            'Critico_Formal': f'{crit_val_formal:.4f}',
+            'Resultado': resultado_formal
+        })
+
+    except Exception as e:
+        print(f"⚠️ Error al aplicar CUSUM a {col}: {e}")
+
+axes[-1].set_xlabel('Periodo')
+plt.tight_layout()
+plt.show()
+
+# --------------------------------------------------------------------------
+# PASO 3: Mostrar Tabla Resumen
+# --------------------------------------------------------------------------
+print("\n--- RESUMEN DEL TEST CUSUM ---")
+df_cusum = pd.DataFrame(cusum_results)
+print(df_cusum.to_markdown(index=False, numalign="left", stralign="left"))
+
+print("\n--- NOTA SOBRE LA INTERPRETACIÓN ---")
+print(f"La Hipótesis Nula (H₀) es que los parámetros son estables. (Nivel de significancia = {int(alpha*100)}%)")
+print("El Test CUSUM rechaza H₀ si el Estadístico Sup-B excede el Valor Crítico de Kolmogorov-Smirnov (0.948 para el 5%).")

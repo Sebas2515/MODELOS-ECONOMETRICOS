@@ -115,7 +115,7 @@ print("\n--- PRUEBA DE COINTEGRACIÓN DE JOHANSEN (Series Originales) ---")
 # Ejecutar la prueba de cointegración de Johansen
 # det_order = 0 → sin tendencia determinista
 # k_ar_diff = 2 → número de rezagos en diferencias
-johansen_test = coint_johansen(df_vecm, det_order=0, k_ar_diff=2)
+johansen_test = coint_johansen(df_vecm, det_order=0, k_ar_diff=4)
 
 # Resultados principales
 trace_stat = johansen_test.lr1       # Estadístico de traza
@@ -141,6 +141,50 @@ else:
         print(f"Relación {i+1}: ", end="")
         relation = " + ".join([f"{coef:.3f}*{var}" for coef, var in zip(eigenvectors[:, i], variables)])
         print(relation)
+
+
+
+
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+
+print("\n=== TEST DE COINTEGRACIÓN JOHANSEN ===")
+
+try:
+    data_levels = df[['N_IPC','N_TCRM','N_PBI','N_TIR','N_S&P']]
+    joh = coint_johansen(data_levels, det_order=0, k_ar_diff=4)
+
+    print("Estadísticos TRACE:")
+    print(joh.lr1)
+    print("\nValores críticos (90,95,99%):")
+    print(joh.cvt)
+
+    if (joh.lr1 > joh.cvt[:,1]).sum() >= 1:
+        print("\n✔️ Se detecta al menos 1 relación de cointegración.")
+        print("Interpretación: Podrías estimar un modelo VECM, aunque el VAR"
+              " en diferencias sigue siendo válido si justificas tu enfoque.")
+    else:
+        print("\n✔️ No hay cointegración.")
+        print("Interpretación: Es correcto estimar un VAR en diferencias sin VECM.")
+except:
+    print("❌ Error al ejecutar Johansen. Revisa que tus columnas existan.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ################################################################################
 # VISUALIZACIÓN Y ANÁLISIS DE COINTEGRACIÓN ENTRE DOS SERIES (EN NIVEL)
